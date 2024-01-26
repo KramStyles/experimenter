@@ -29,6 +29,8 @@ export const optionIndexKeys: {
   types: (option) => option.value,
   projects: (option) => option.name,
   targetingConfigs: (option) => option.value,
+  takeaways: (option) => option.value,
+  qaStatus: (option) => option.value,
 };
 
 type ExperimentFilter<K extends FilterValueKeys> = (
@@ -82,6 +84,13 @@ const experimentFilters: { [key in FilterValueKeys]: ExperimentFilter<key> } = {
     }
     return targetingConfigMatch;
   },
+  takeaways: (option, experiment) => {
+    return (
+      (experiment.takeawaysQbrLearning && option.value === "QBR_LEARNING") ||
+      (experiment.takeawaysMetricGain && option.value === "DAU_GAIN")
+    );
+  },
+  qaStatus: (option, experiment) => experiment.qaStatus === option.value,
 };
 
 export function getFilterValueFromParams(
@@ -148,6 +157,20 @@ export function getFilterValueFromParams(
           options[key],
           optionIndexKeys[key],
           values,
+        );
+        break;
+      case "takeaways":
+        filterValue[key] = selectFilterOptions<"takeaways">(
+          options[key],
+          optionIndexKeys[key],
+          values as string[],
+        );
+        break;
+      case "qaStatus":
+        filterValue[key] = selectFilterOptions<"qaStatus">(
+          options[key],
+          optionIndexKeys[key],
+          values as string[],
         );
         break;
     }
@@ -223,6 +246,18 @@ export function updateParamsFromFilterValue(
           break;
         case "targetingConfigs":
           values = indexFilterOptions<"targetingConfigs">(
+            filterValue[key],
+            optionIndexKeys[key],
+          );
+          break;
+        case "takeaways":
+          values = indexFilterOptions<"takeaways">(
+            filterValue[key],
+            optionIndexKeys[key],
+          );
+          break;
+        case "qaStatus":
+          values = indexFilterOptions<"qaStatus">(
             filterValue[key],
             optionIndexKeys[key],
           );
@@ -304,6 +339,20 @@ export function filterExperiments(
         break;
       case "targetingConfigs":
         filteredExperiments = filterExperimentsByOptions<"targetingConfigs">(
+          filterState[key],
+          experimentFilters[key],
+          filteredExperiments,
+        );
+        break;
+      case "takeaways":
+        filteredExperiments = filterExperimentsByOptions<"takeaways">(
+          filterState[key],
+          experimentFilters[key],
+          filteredExperiments,
+        );
+        break;
+      case "qaStatus":
+        filteredExperiments = filterExperimentsByOptions<"qaStatus">(
           filterState[key],
           experimentFilters[key],
           filteredExperiments,

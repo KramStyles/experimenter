@@ -113,10 +113,22 @@ export type ExperimentSortSelector =
 
 export const featureConfigNameSortSelector: ExperimentSortSelector = (
   experiment,
-) => experiment.featureConfig?.name;
+) =>
+  experiment.featureConfigs
+    ?.map((fc) => fc?.name)
+    .sort()
+    .join(", ");
 
 export const ownerUsernameSortSelector: ExperimentSortSelector = (experiment) =>
   experiment.owner?.username;
+
+export const qaStatusSortSelector: ExperimentSortSelector = ({ qaStatus }) => {
+  if (qaStatus) {
+    return qaStatus;
+  } else {
+    return "0";
+  }
+};
 
 export const applicationSortSelector: ExperimentSortSelector = (experiment) =>
   experiment.application!;

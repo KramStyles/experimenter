@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from django import forms
 from django.contrib import admin
@@ -23,7 +23,9 @@ from experimenter.experiments.models import (
     NimbusDocumentationLink,
     NimbusExperiment,
     NimbusFeatureConfig,
+    NimbusFeatureVersion,
     NimbusIsolationGroup,
+    NimbusVersionedSchema,
 )
 from experimenter.jetstream import tasks
 from experimenter.settings import DEV_USER_EMAIL
@@ -255,7 +257,6 @@ class NimbusExperimentBucketRangeInlineAdmin(
 
 class NimbusExperimentAdminForm(forms.ModelForm):
     application = forms.ChoiceField(choices=NimbusExperiment.Application.choices)
-    channel = forms.ChoiceField(choices=NimbusExperiment.Channel.choices)
     public_description = forms.CharField(required=False, widget=forms.Textarea())
     firefox_min_version = forms.ChoiceField(
         choices=NimbusExperiment.Version.choices, required=False
@@ -271,6 +272,11 @@ class NimbusExperimentAdminForm(forms.ModelForm):
     )
     conclusion_recommendation = forms.ChoiceField(
         choices=NimbusExperiment.ConclusionRecommendation.choices, required=False
+    )
+    qa_status = forms.ChoiceField(
+        choices=NimbusExperiment.QAStatus.choices,
+        required=False,
+        initial=NimbusExperiment.QAStatus.NOT_SET,
     )
 
     def __init__(self, *args, **kwargs):
@@ -323,16 +329,59 @@ class NimbusExperimentAdmin(
     form = NimbusExperimentAdminForm
     actions = [force_fetch_jetstream_data]
     resource_class = NimbusExperimentResource
+    filter_horizontal = ("excluded_experiments", "required_experiments")
 
 
-class NimbusFeatureConfigAdmin(NoDeleteAdminMixin, admin.ModelAdmin[NimbusFeatureConfig]):
+class NimbusFeatureVersionAdmin(
+    ReadOnlyAdminMixin, admin.ModelAdmin[NimbusFeatureVersion]
+):
+    pass
+
+
+class NimbusVersionedSchemaApplicationFilter(admin.SimpleListFilter):
+    title = "application"
+    parameter_name = "application"
+
+    def lookups(self, request, model_admin):
+        return NimbusExperiment.Application.choices
+
+    def queryset(self, request, queryset):
+        if self.value():
+            queryset = queryset.filter(feature_config__application=self.value())
+
+        return queryset
+
+
+class NimbusVersionedSchemaAdmin(
+    ReadOnlyAdminMixin, admin.ModelAdmin[NimbusVersionedSchema]
+):
+    @staticmethod
+    def get_application(obj: NimbusVersionedSchema):
+        return obj.feature_config.application
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("feature_config")
+
+    get_application.short_description = "Application"
+
+    list_filter = (NimbusVersionedSchemaApplicationFilter,)
+    list_display = (
+        "__str__",
+        get_application,
+    )
+
+
+class NimbusVersionedSchemaInlineAdmin(
+    ReadOnlyAdminMixin, admin.TabularInline[NimbusVersionedSchema]
+):
+    model = NimbusVersionedSchema
+
+
+class NimbusFeatureConfigAdmin(ReadOnlyAdminMixin, admin.ModelAdmin[NimbusFeatureConfig]):
     prepopulated_fields = {"slug": ("name",)}
-    list_filter = ("application", "read_only")
-    list_display = ("name", "application", "read_only")
-    exclude = ("read_only",)
-
-    def has_change_permission(self, request, obj: Optional[NimbusFeatureConfig] = None):
-        return obj and not obj.read_only
+    list_filter = ("application",)
+    list_display = ("name", "application")
+    inlines = (NimbusVersionedSchemaInlineAdmin,)
 
 
 class NimbusBranchScreenshotInlineAdmin(
@@ -367,5 +416,7 @@ class NimbusBranchAdmin(NoDeleteAdminMixin, admin.ModelAdmin[NimbusBranch]):
 admin.site.register(NimbusIsolationGroup, NimbusIsolationGroupAdmin)
 admin.site.register(NimbusExperiment, NimbusExperimentAdmin)
 admin.site.register(NimbusFeatureConfig, NimbusFeatureConfigAdmin)
+admin.site.register(NimbusVersionedSchema, NimbusVersionedSchemaAdmin)
 admin.site.register(NimbusBranch, NimbusBranchAdmin)
+admin.site.register(NimbusFeatureVersion, NimbusFeatureVersionAdmin)
 admin.site.register(NimbusDocumentationLink)

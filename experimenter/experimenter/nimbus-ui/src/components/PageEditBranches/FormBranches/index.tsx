@@ -3,12 +3,19 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import classNames from "classnames";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Alert from "react-bootstrap/Alert";
 import Button from "react-bootstrap/Button";
 import Col from "react-bootstrap/Col";
 import Form from "react-bootstrap/Form";
+import Row from "react-bootstrap/Row";
 import { FormProvider } from "react-hook-form";
+import Select, {
+  components as SelectComponents,
+  MultiValueGenericProps,
+  OptionProps,
+  Options,
+} from "react-select";
 import FormBranch from "src/components/PageEditBranches/FormBranches/FormBranch";
 import {
   FormBranchesSaveState,
@@ -19,9 +26,18 @@ import { FormBranchesState } from "src/components/PageEditBranches/FormBranches/
 import { FormData } from "src/components/PageEditBranches/FormBranches/reducer/update";
 import { useExitWarning, useForm, useReviewCheck } from "src/hooks";
 import { IsDirtyUnsaved } from "src/hooks/useCommonForm/useCommonFormMethods";
-import { getConfig_nimbusConfig } from "src/types/getConfig";
+import {
+  getConfig_nimbusConfig,
+  getConfig_nimbusConfig_allFeatureConfigs,
+} from "src/types/getConfig";
 import { getExperiment_experimentBySlug } from "src/types/getExperiment";
 import { NimbusExperimentApplicationEnum } from "src/types/globalTypes";
+
+interface FeatureConfigOption {
+  value: string;
+  name: string;
+  description: string | null;
+}
 
 type FormBranchesProps = {
   isLoading: boolean;
@@ -34,14 +50,23 @@ type FormBranchesProps = {
     next: boolean,
   ) => void;
 };
-
 export const FormBranches = ({
   isLoading,
   experiment,
   allFeatureConfigs,
   onSave,
 }: FormBranchesProps) => {
-  const { fieldMessages, fieldWarnings } = useReviewCheck(experiment);
+  const [selectDirty, setSelectDirty] = useState(false);
+
+  let { fieldMessages, fieldWarnings } = useReviewCheck(experiment);
+
+  [fieldMessages, fieldWarnings] = useMemo(() => {
+    // When we change the selected features, the errors will not line up correctly.
+    if (selectDirty) {
+      return [{}, {}];
+    }
+    return [fieldMessages, fieldWarnings];
+  }, [selectDirty, fieldMessages, fieldWarnings]);
 
   const [
     {
@@ -53,6 +78,8 @@ export const FormBranches = ({
       equalRatio,
       preventPrefConflicts,
       globalErrors,
+      isLocalized,
+      localizations,
     },
     extractSaveState,
     dispatch,
@@ -174,11 +201,12 @@ export const FormBranches = ({
     });
   };
 
-  const onFeatureConfigChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFeatureId = parseInt(ev.target.value, 10);
-    setIsSelectValid(true);
+  const onFeatureConfigsChanged = (newValue: Options<FeatureConfigOption>) => {
+    setIsSelectValid(newValue.length > 0);
+    setSelectDirty(true);
+
     return handleFeatureConfigsChange(
-      isNaN(selectedFeatureId) ? [] : [selectedFeatureId],
+      newValue.map((value) => parseInt(value.value, 10)),
     );
   };
 
@@ -197,11 +225,28 @@ export const FormBranches = ({
       });
     };
 
+  const handleLocalizedChanged = (ev: React.ChangeEvent<HTMLInputElement>) => {
+    commitFormData();
+    dispatch({
+      type: "setIsLocalized",
+      value: ev.target.checked,
+    });
+  };
+
+  const handleLocalizationsChanged = (ev: React.ChangeEvent) => {
+    commitFormData();
+    dispatch({
+      type: "setLocalizations",
+      value: (ev.target as HTMLTextAreaElement).value,
+    });
+  };
+
   type DefaultValues = typeof defaultValues;
   const [handleSave, handleSaveNext] = [false, true].map((next) =>
     handleSubmit((dataIn: DefaultValues) => {
       try {
         setIsFormSubmitted(true);
+        setSelectDirty(false);
         if (!isLoading) {
           commitFormData();
           onSave(
@@ -234,6 +279,45 @@ export const FormBranches = ({
   const isArchived =
     experiment?.isArchived != null ? experiment.isArchived : false;
 
+  const featureConfigOptions: FeatureConfigOption[] = useMemo(() => {
+    return (allFeatureConfigs ?? [])
+      .filter(
+        (feature): feature is getConfig_nimbusConfig_allFeatureConfigs =>
+          !!feature?.enabled,
+      )
+      .map((feature) => {
+        return {
+          name: feature.name,
+          description: feature.description,
+          value: feature.id!.toString(),
+        };
+      });
+  }, [allFeatureConfigs]);
+
+  const selectedFeatureConfigOptions: FeatureConfigOption[] = useMemo(
+    () =>
+      (experimentFeatureConfigIds ?? [])
+        .filter<number>((id): id is number => typeof id !== "undefined")
+        .map(
+          (id) =>
+            featureConfigOptions.find(
+              (feature) => feature.value === id.toString(),
+            )!,
+        ),
+    [experimentFeatureConfigIds, featureConfigOptions],
+  );
+
+  const optionDisabled = useCallback(
+    () => selectedFeatureConfigOptions.length >= 20,
+    [selectedFeatureConfigOptions.length],
+  );
+
+  const selectIsWarning = !!(
+    fieldMessages.feature_configs ??
+    fieldWarnings.feature_configs ??
+    []
+  ).length;
+
   return (
     <FormProvider {...formMethods}>
       <Form
@@ -255,53 +339,48 @@ export const FormBranches = ({
         ))}
 
         <Form.Group>
-          <Form.Control
-            isValid={selectValid}
-            as="select"
-            name="featureConfig"
-            data-testid="feature-config-select"
-            // Displaying the review-readiness error is handled here instead of `formControlAttrs`
-            // due to a state conflict between `react-hook-form` and our internal branch state mangement
-            className={classNames({
-              "is-warning":
-                fieldMessages.feature_config?.length > 0 ||
-                fieldWarnings.feature_config?.length > 0,
-            })}
-            custom
-            onChange={onFeatureConfigChange}
-            value={
-              experimentFeatureConfigIds?.length
-                ? experimentFeatureConfigIds[0] || undefined
-                : undefined
-            }
-          >
-            <option value="">Select...</option>
-            {allFeatureConfigs
-              ?.filter((feature) => feature?.enabled)
-              .map((feature) => (
-                <option
-                  key={`feature-${feature?.slug}-${feature?.id!}`}
-                  value={feature?.id!}
-                >
-                  {feature?.name}
-                  {feature?.description?.length
-                    ? ` - ${feature.description}`
-                    : ""}
-                </option>
-              ))}
-          </Form.Control>
-          {fieldMessages.feature_config?.length > 0 && (
+          <Row className={selectIsWarning ? "is-warning" : ""}>
+            <Col>
+              <Select<FeatureConfigOption, true>
+                isMulti
+                placeholder="Features..."
+                options={featureConfigOptions}
+                onChange={onFeatureConfigsChanged}
+                value={selectedFeatureConfigOptions}
+                aria-label="Features"
+                instanceId="feature-configs"
+                classNames={{
+                  control: () => classNames({ "is-valid": selectValid }),
+                }}
+                classNamePrefix="react-select"
+                getOptionLabel={(option: FeatureConfigOption) =>
+                  option.description
+                    ? `${option.name} - ${option.description}`
+                    : option.name
+                }
+                isOptionDisabled={optionDisabled}
+                components={{
+                  MultiValueLabel: FeatureConfigSelectLabel,
+                  Option: FeatureConfigSelectOption,
+                }}
+              />
+            </Col>
+            <Col sm={1} className="align-self-center text-center text-nowrap">
+              {selectedFeatureConfigOptions.length} / 20
+            </Col>
+          </Row>
+          {fieldMessages.feature_configs?.length && (
             // @ts-ignore This component doesn't technically support type="warning", but
             // all it's doing is using the string in a class, so we can safely override.
-            <Form.Control.Feedback type="warning" data-for="featureConfig">
-              {(fieldMessages.feature_config as SerializerMessage).join(", ")}
+            <Form.Control.Feedback type="warning" data-for="featureConfigs">
+              {(fieldMessages.feature_configs as SerializerMessage).join(", ")}
             </Form.Control.Feedback>
           )}
-          {fieldWarnings.feature_config?.length > 0 && (
+          {fieldWarnings.feature_configs?.length && (
             // @ts-ignore This component doesn't technically support type="warning", but
             // all it's doing is using the string in a class, so we can safely override.
-            <Form.Control.Feedback type="warning" data-for="featureConfig">
-              {(fieldWarnings.feature_config as SerializerMessage).join(", ")}
+            <Form.Control.Feedback type="warning" data-for="featureConfigs">
+              {(fieldWarnings.feature_configs as SerializerMessage).join(", ")}
             </Form.Control.Feedback>
           )}
         </Form.Group>
@@ -440,6 +519,68 @@ export const FormBranches = ({
             + Add branch
           </Button>
         )}
+        {experiment.application === NimbusExperimentApplicationEnum.DESKTOP && (
+          <Form.Group id="localizaton" className="mt-3">
+            <h2>Localization</h2>
+            <Form.Group controlId="isLocalized">
+              <Form.Check
+                label="Is this a localized experiment?"
+                type="checkbox"
+                name="isLocalized"
+                data-testid="isLocalized"
+                checked={!!isLocalized}
+                onChange={handleLocalizedChanged}
+              />
+            </Form.Group>
+            {isLocalized && (
+              <Form.Group controlId="localizations" className="mt-2">
+                <Form.Label>Localization Substitutions</Form.Label>
+                <Form.Control
+                  as="textarea"
+                  rows={5}
+                  placeholder="Localization substitutions object"
+                  name="localizations"
+                  onChange={handleLocalizationsChanged}
+                  value={localizations ?? ""}
+                  isValid={
+                    checkValid &&
+                    typeof fieldMessages.localizations === "undefined"
+                  }
+                  data-testid="localizations"
+                  className={classNames({
+                    "is-warning":
+                      (fieldMessages.localizations?.length ?? false) ||
+                      (fieldWarnings.localizations?.length ?? false),
+                  })}
+                />
+                {fieldMessages.localizations?.length && (
+                  <Form.Control.Feedback
+                    // @ts-ignore This component doesn't technically support type="warning", but
+                    // all it's doing is using the string in a class, so we can safely override.
+                    type="warning"
+                    data-for="localizations"
+                  >
+                    {(fieldMessages.localizations as SerializerMessage).join(
+                      ", ",
+                    )}
+                  </Form.Control.Feedback>
+                )}
+                {fieldWarnings.localizations?.length && (
+                  <Form.Control.Feedback
+                    // @ts-ignore This component doesn't technically support type="warning", but
+                    // all it's doing is using the string in a class, so we can safely override.
+                    type="warning"
+                    data-for="localizations"
+                  >
+                    {(fieldWarnings.localizations as SerializerMessage).join(
+                      ", ",
+                    )}
+                  </Form.Control.Feedback>
+                )}
+              </Form.Group>
+            )}
+          </Form.Group>
+        )}
         <div className="d-flex flex-row-reverse bd-highlight">
           <div className="p-2">
             <button
@@ -469,5 +610,33 @@ export const FormBranches = ({
     </FormProvider>
   );
 };
+
+function FeatureConfigSelectLabel(
+  props: MultiValueGenericProps<FeatureConfigOption>,
+) {
+  return (
+    <SelectComponents.MultiValueLabel {...props}>
+      {props.data.name}
+    </SelectComponents.MultiValueLabel>
+  );
+}
+
+function FeatureConfigSelectOption(
+  props: OptionProps<FeatureConfigOption, true>,
+) {
+  return (
+    // @ts-ignore innerProps are passed directly to the underlying <div> and
+    // data-* attributes are valid, but they do not appear in the prop types.
+    <SelectComponents.Option
+      {...{
+        ...props,
+        innerProps: {
+          ...props.innerProps,
+          "data-feature-config-id": props.data.value,
+        },
+      }}
+    />
+  );
+}
 
 export default FormBranches;

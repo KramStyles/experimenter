@@ -21,6 +21,8 @@ export function formBranchesActionReducer(
       return addBranch(state);
     case "removeBranch":
       return removeBranch(state, action);
+    case "setIsLocalized":
+      return setIsLocalized(state, action);
     case "setIsRollout":
       return setIsRollout(state, action);
     case "setFeatureConfigs":
@@ -29,6 +31,8 @@ export function formBranchesActionReducer(
       return setwarnFeatureSchema(state, action);
     case "setEqualRatio":
       return setEqualRatio(state, action);
+    case "setLocalizations":
+      return setLocalizations(state, action);
     case "setSubmitErrors":
       return setSubmitErrors(state, action);
     case "clearSubmitErrors":
@@ -52,7 +56,9 @@ export type FormBranchesAction =
   | SetEqualRatioAction
   | SetFeatureConfigsAction
   | SetwarnFeatureSchemaAction
+  | SetIsLocalizedAction
   | SetIsRolloutAction
+  | SetLocalizationsAction
   | SetSubmitErrorsAction
   | SetPreventPrefConflictsAction
   | ClearSubmitErrorsAction
@@ -69,7 +75,11 @@ function addBranch(state: FormBranchesState): FormBranchesState {
   lastId++;
 
   if (referenceBranch === null) {
-    referenceBranch = createAnnotatedBranch(lastId, "control");
+    referenceBranch = createAnnotatedBranch(
+      lastId,
+      "control",
+      state.featureConfigIds,
+    );
   } else {
     treatmentBranches = [
       ...(treatmentBranches || []),
@@ -77,6 +87,7 @@ function addBranch(state: FormBranchesState): FormBranchesState {
         state.lastId,
         // 65 is A, but we generate a control, so start at 64
         `Treatment ${String.fromCharCode(64 + lastId)}`,
+        state.featureConfigIds,
       ),
     ];
   }
@@ -117,9 +128,39 @@ function setFeatureConfigs(
   state: FormBranchesState,
   { value: featureConfigIds }: SetFeatureConfigsAction,
 ): FormBranchesState {
+  function extractFeatureValue(
+    featureConfigId: string,
+    branch: AnnotatedBranch | null,
+  ): string {
+    return (
+      branch?.featureValues?.find((fv) => fv?.featureConfig === featureConfigId)
+        ?.value ?? ""
+    );
+  }
+  featureConfigIds?.sort((a, b) => a! - b!);
   return {
     ...state,
     featureConfigIds: featureConfigIds || null,
+    referenceBranch: {
+      ...state.referenceBranch,
+      featureValues: featureConfigIds?.map((featureConfigId) => ({
+        featureConfig: featureConfigId?.toString(),
+        value: extractFeatureValue(
+          featureConfigId!.toString(),
+          state.referenceBranch,
+        ),
+      })),
+    } as AnnotatedBranch,
+    treatmentBranches: state.treatmentBranches?.map((treatmentBranch) => ({
+      ...treatmentBranch,
+      featureValues: featureConfigIds?.map((featureConfigId) => ({
+        featureConfig: featureConfigId?.toString(),
+        value: extractFeatureValue(
+          featureConfigId!.toString(),
+          treatmentBranch,
+        ),
+      })),
+    })) as AnnotatedBranch[],
   };
 }
 
@@ -127,6 +168,22 @@ type SetwarnFeatureSchemaAction = {
   type: "setwarnFeatureSchema";
   value: FormBranchesState["warnFeatureSchema"];
 };
+
+type SetIsLocalizedAction = {
+  type: "setIsLocalized";
+  value: FormBranchesState["isLocalized"];
+};
+
+function setIsLocalized(
+  state: FormBranchesState,
+  { value: isLocalized }: SetIsLocalizedAction,
+) {
+  return {
+    ...state,
+    isLocalized,
+    localizations: isLocalized ? state.localizations ?? "" : null,
+  };
+}
 
 type SetIsRolloutAction = {
   type: "setIsRollout";
@@ -187,6 +244,21 @@ function setEqualRatio(
     equalRatio,
     referenceBranch,
     treatmentBranches,
+  };
+}
+
+type SetLocalizationsAction = {
+  type: "setLocalizations";
+  value: FormBranchesState["localizations"];
+};
+
+function setLocalizations(
+  state: FormBranchesState,
+  { value: localizations }: SetLocalizationsAction,
+) {
+  return {
+    ...state,
+    localizations,
   };
 }
 
@@ -329,10 +401,14 @@ function branchUpdatedWithFormData(
       image,
     };
   });
-  const featureValues = state.featureConfigIds?.map((featureConfigId, idx) => {
-    const { value } = formData?.featureValues?.[idx] || {};
+  const featureValues = state.featureConfigIds?.map((featureConfigId) => {
+    const featureConfig = featureConfigId!.toString();
+    const { value } =
+      formData?.featureValues?.find(
+        (featureValue) => featureValue!.featureConfig === featureConfig,
+      ) ?? {};
     return {
-      featureConfigId,
+      featureConfig,
       value,
     };
   });

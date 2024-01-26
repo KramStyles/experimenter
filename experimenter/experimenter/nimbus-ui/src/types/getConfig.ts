@@ -90,16 +90,19 @@ export interface getConfig_nimbusConfig_documentationLink {
 export interface getConfig_nimbusConfig_locales {
   id: string;
   name: string;
+  code: string;
 }
 
 export interface getConfig_nimbusConfig_countries {
   id: string;
   name: string;
+  code: string;
 }
 
 export interface getConfig_nimbusConfig_languages {
   id: string;
   name: string;
+  code: string;
 }
 
 export interface getConfig_nimbusConfig_projects {
@@ -118,12 +121,22 @@ export interface getConfig_nimbusConfig_statusUpdateExemptFields {
   rollouts: (string | null)[] | null;
 }
 
+export interface getConfig_nimbusConfig_takeaways {
+  label: string | null;
+  value: string | null;
+}
+
+export interface getConfig_nimbusConfig_qaStatus {
+  label: string | null;
+  value: string | null;
+}
+
 export interface getConfig_nimbusConfig {
   applications: (getConfig_nimbusConfig_applications | null)[] | null;
   channels: (getConfig_nimbusConfig_channels | null)[] | null;
   conclusionRecommendations: (getConfig_nimbusConfig_conclusionRecommendations | null)[] | null;
   applicationConfigs: (getConfig_nimbusConfig_applicationConfigs | null)[] | null;
-  allFeatureConfigs: (getConfig_nimbusConfig_allFeatureConfigs | null)[] | null;
+  allFeatureConfigs: getConfig_nimbusConfig_allFeatureConfigs[] | null;
   firefoxVersions: (getConfig_nimbusConfig_firefoxVersions | null)[] | null;
   outcomes: (getConfig_nimbusConfig_outcomes | null)[] | null;
   owners: (getConfig_nimbusConfig_owners | null)[] | null;
@@ -137,6 +150,9 @@ export interface getConfig_nimbusConfig {
   projects: (getConfig_nimbusConfig_projects | null)[] | null;
   types: (getConfig_nimbusConfig_types | null)[] | null;
   statusUpdateExemptFields: (getConfig_nimbusConfig_statusUpdateExemptFields | null)[] | null;
+  populationSizingData: string | null;
+  takeaways: (getConfig_nimbusConfig_takeaways | null)[] | null;
+  qaStatus: (getConfig_nimbusConfig_qaStatus | null)[] | null;
 }
 
 export interface getConfig {

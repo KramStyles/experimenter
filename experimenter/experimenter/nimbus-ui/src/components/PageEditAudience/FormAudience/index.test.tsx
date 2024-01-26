@@ -11,7 +11,11 @@ import {
   within,
 } from "@testing-library/react";
 import React from "react";
-import { filterAndSortTargetingConfigs } from "src/components/PageEditAudience/FormAudience";
+import selectEvent from "react-select-event";
+import {
+  filterAndSortTargetingConfigs,
+  MOBILE_APPLICATIONS,
+} from "src/components/PageEditAudience/FormAudience";
 import {
   MOCK_EXPERIMENT,
   MOCK_ROLLOUT,
@@ -23,9 +27,17 @@ import {
   FIELD_MESSAGES,
   TOOLTIP_DURATION,
 } from "src/lib/constants";
-import { MOCK_CONFIG } from "src/lib/mocks";
-import { assertSerializerMessages } from "src/lib/test-utils";
 import {
+  mockDirectoryExperiments,
+  mockExperimentQuery,
+  MOCK_CONFIG,
+  MOCK_EXPERIMENTS_BY_APPLICATION,
+} from "src/lib/mocks";
+import { assertSerializerMessages } from "src/lib/test-utils";
+import { getAllExperimentsByApplication_experimentsByApplication } from "src/types/getAllExperimentsByApplication";
+import { getExperiment_experimentBySlug } from "src/types/getExperiment";
+import {
+  ExperimentInput,
   NimbusExperimentApplicationEnum,
   NimbusExperimentChannelEnum,
   NimbusExperimentFirefoxVersionEnum,
@@ -33,6 +45,497 @@ import {
 } from "src/types/globalTypes";
 
 describe("FormAudience", () => {
+  const origWindowOpen = global.window.open;
+  let mockWindowOpen: any;
+
+  beforeEach(() => {
+    mockWindowOpen = jest.fn();
+    global.window.open = mockWindowOpen;
+  });
+
+  afterEach(() => {
+    global.window.open = origWindowOpen;
+  });
+
+  describe("excluded and required experiments fields", () => {
+    const sum = (items: number[]) =>
+      items.reduce((acc: number, curr: number) => acc + curr);
+    const countBranches = (
+      experiments: getAllExperimentsByApplication_experimentsByApplication[],
+    ) => sum(experiments.map((e) => e.treatmentBranches!.length + 2));
+    const query = (field: string) =>
+      `#react-select-${field}-listbox .react-select__option`;
+
+    it("fields renders options", async () => {
+      const experiment = {
+        ...MOCK_EXPERIMENT,
+        name: MOCK_EXPERIMENTS_BY_APPLICATION[0].name,
+        slug: MOCK_EXPERIMENTS_BY_APPLICATION[0].slug,
+        id: MOCK_EXPERIMENTS_BY_APPLICATION[0].id,
+      };
+
+      const { container } = render(<Subject experiment={experiment} />);
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+
+      let options = container.querySelectorAll(query("excludedExperiments"));
+      expect(options.length).toEqual(0);
+      await selectEvent.openMenu(excluded);
+      options = container.querySelectorAll(query("excludedExperiments"));
+      expect(options.length).toEqual(
+        countBranches(MOCK_EXPERIMENTS_BY_APPLICATION) - 3,
+      );
+
+      expect(
+        Array.from(options, (e) => e.textContent).find((text) =>
+          text?.includes(`(${experiment.slug})`),
+        ),
+      ).toBeUndefined();
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      options = container.querySelectorAll(query("requiredExperiments"));
+      expect(options.length).toEqual(0);
+      await selectEvent.openMenu(required);
+      options = container.querySelectorAll(query("requiredExperiments"));
+      expect(options.length).toEqual(
+        countBranches(MOCK_EXPERIMENTS_BY_APPLICATION) - 3,
+      );
+
+      expect(
+        Array.from(options, (e) => e.textContent).find((text) =>
+          text?.includes(`(${experiment.slug})`),
+        ),
+      ).toBeUndefined();
+    });
+
+    it("only displays one option for experiments with one branch", async () => {
+      const experiment = {
+        ...MOCK_EXPERIMENT,
+        name: MOCK_EXPERIMENTS_BY_APPLICATION[0].name,
+        slug: MOCK_EXPERIMENTS_BY_APPLICATION[0].slug,
+        id: MOCK_EXPERIMENTS_BY_APPLICATION[0].id,
+      };
+
+      const experimentsByApplication = [
+        { ...MOCK_EXPERIMENTS_BY_APPLICATION[1], treatmentBranches: [] },
+      ];
+
+      const { container } = render(
+        <Subject
+          experiment={experiment}
+          experimentsByApplication={{
+            allExperiments: experimentsByApplication,
+          }}
+        />,
+      );
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+      let options = container.querySelectorAll(query("excludedExperiments"));
+      expect(options.length).toEqual(1);
+
+      expect(
+        Array.from(options, (e) => e.textContent).find((text) =>
+          text?.includes(`(${experiment.slug})`),
+        ),
+      ).toBeUndefined();
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      options = container.querySelectorAll(query("requiredExperiments"));
+      expect(options.length).toEqual(1);
+
+      expect(
+        Array.from(options, (e) => e.textContent).find((text) =>
+          text?.includes(`(${experiment.slug})`),
+        ),
+      ).toBeUndefined();
+    });
+
+    it("saves required and excluded experiments with all branches for experiments", async () => {
+      const onSubmit = jest.fn();
+      const MOCK_EXPERIMENTS_BY_APPLICATION: getAllExperimentsByApplication_experimentsByApplication[] =
+        Array.from(mockDirectoryExperiments().entries()).map(
+          ([idx, experiment]) => ({
+            id: idx + 1,
+            name: experiment.name,
+            slug:
+              experiment.slug ??
+              experiment.name.toLowerCase().replace(" ", "-"),
+            publicDescription: "mock description",
+            referenceBranch: { slug: "control" },
+            treatmentBranches: [{ slug: "treatment" }],
+          }),
+        );
+      const experiment: getExperiment_experimentBySlug = mockExperimentQuery(
+        "demo-slug",
+        {
+          excludedExperimentsBranches: [],
+          requiredExperimentsBranches: [],
+        },
+      ).experiment;
+      const requiredExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+      const excludedExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[2];
+
+      const expected: ExperimentInput = {
+        channel: experiment.channel,
+        firefoxMinVersion: experiment.firefoxMinVersion,
+        firefoxMaxVersion: experiment.firefoxMaxVersion,
+        targetingConfigSlug: experiment.targetingConfigSlug,
+        populationPercent: experiment.populationPercent,
+        totalEnrolledClients: experiment.totalEnrolledClients,
+        proposedEnrollment: "" + experiment.proposedEnrollment,
+        proposedDuration: "" + experiment.proposedDuration,
+        countries: experiment.countries.map((v) => "" + v.id),
+        locales: experiment.locales.map((v) => "" + v.id),
+        languages: experiment.languages.map((v) => "" + v.id),
+        isSticky: experiment.isSticky,
+        isFirstRun: experiment.isFirstRun,
+        requiredExperimentsBranches: [
+          {
+            requiredExperiment: requiredExperiment.id,
+            branchSlug: null,
+          },
+        ],
+        excludedExperimentsBranches: [
+          {
+            excludedExperiment: excludedExperiment.id,
+            branchSlug: null,
+          },
+        ],
+      };
+
+      render(<Subject {...{ experiment, onSubmit }} />);
+      await screen.findByTestId("FormAudience");
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      await selectEvent.select(required, [
+        `${requiredExperiment.name} (All branches)`,
+      ]);
+
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+      await selectEvent.select(excluded, [
+        `${excludedExperiment.name} (All branches)`,
+      ]);
+
+      const submitButton = screen.getByTestId("submit-button");
+
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit.mock.calls).toEqual([[expected, false]]);
+      });
+    });
+
+    it("saves required and excluded experiments with all branches for rollouts", async () => {
+      const onSubmit = jest.fn();
+      const MOCK_EXPERIMENTS_BY_APPLICATION: getAllExperimentsByApplication_experimentsByApplication[] =
+        Array.from(mockDirectoryExperiments().entries()).map(
+          ([idx, experiment]) => ({
+            id: idx + 1,
+            name: experiment.name,
+            slug:
+              experiment.slug ??
+              experiment.name.toLowerCase().replace(" ", "-"),
+            publicDescription: "mock description",
+            referenceBranch: { slug: "control" },
+            treatmentBranches: [{ slug: "treatment" }],
+          }),
+        );
+      const experiment: getExperiment_experimentBySlug = mockExperimentQuery(
+        "demo-slug",
+        {
+          isRollout: true,
+          excludedExperimentsBranches: [],
+          requiredExperimentsBranches: [],
+        },
+      ).experiment;
+      const requiredExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+      const excludedExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[2];
+
+      const expected: ExperimentInput = {
+        channel: experiment.channel,
+        firefoxMinVersion: experiment.firefoxMinVersion,
+        firefoxMaxVersion: experiment.firefoxMaxVersion,
+        targetingConfigSlug: experiment.targetingConfigSlug,
+        populationPercent: experiment.populationPercent,
+        totalEnrolledClients: experiment.totalEnrolledClients,
+        proposedEnrollment: "" + experiment.proposedEnrollment,
+        proposedDuration: "" + experiment.proposedDuration,
+        countries: experiment.countries.map((v) => "" + v.id),
+        locales: experiment.locales.map((v) => "" + v.id),
+        languages: experiment.languages.map((v) => "" + v.id),
+        isSticky: experiment.isSticky,
+        isFirstRun: experiment.isFirstRun,
+        requiredExperimentsBranches: [
+          {
+            requiredExperiment: requiredExperiment.id,
+            branchSlug: null,
+          },
+        ],
+        excludedExperimentsBranches: [
+          {
+            excludedExperiment: excludedExperiment.id,
+            branchSlug: null,
+          },
+        ],
+      };
+
+      render(<Subject {...{ experiment, onSubmit }} />);
+      await screen.findByTestId("FormAudience");
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      await selectEvent.select(required, [
+        `${requiredExperiment.name} (All branches)`,
+      ]);
+
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+      await selectEvent.select(excluded, [
+        `${excludedExperiment.name} (All branches)`,
+      ]);
+
+      const submitButton = screen.getByTestId("submit-button");
+
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit.mock.calls).toEqual([[expected, false]]);
+      });
+    });
+
+    it("saves required and excluded experiments with specific branches for experiments", async () => {
+      const onSubmit = jest.fn();
+      const MOCK_EXPERIMENTS_BY_APPLICATION: getAllExperimentsByApplication_experimentsByApplication[] =
+        Array.from(mockDirectoryExperiments().entries()).map(
+          ([idx, experiment]) => ({
+            id: idx + 1,
+            name: experiment.name,
+            slug:
+              experiment.slug ??
+              experiment.name.toLowerCase().replace(" ", "-"),
+            publicDescription: "mock description",
+            referenceBranch: { slug: "control" },
+            treatmentBranches: [{ slug: "treatment" }],
+          }),
+        );
+      const experiment: getExperiment_experimentBySlug = mockExperimentQuery(
+        "demo-slug",
+        {
+          excludedExperimentsBranches: [],
+          requiredExperimentsBranches: [],
+        },
+      ).experiment;
+      const requiredExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+      const excludedExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[2];
+
+      const expected: ExperimentInput = {
+        channel: experiment.channel,
+        firefoxMinVersion: experiment.firefoxMinVersion,
+        firefoxMaxVersion: experiment.firefoxMaxVersion,
+        targetingConfigSlug: experiment.targetingConfigSlug,
+        populationPercent: experiment.populationPercent,
+        totalEnrolledClients: experiment.totalEnrolledClients,
+        proposedEnrollment: "" + experiment.proposedEnrollment,
+        proposedDuration: "" + experiment.proposedDuration,
+        countries: experiment.countries.map((v) => "" + v.id),
+        locales: experiment.locales.map((v) => "" + v.id),
+        languages: experiment.languages.map((v) => "" + v.id),
+        isSticky: experiment.isSticky,
+        isFirstRun: experiment.isFirstRun,
+        requiredExperimentsBranches: [
+          {
+            requiredExperiment: requiredExperiment.id,
+            branchSlug: "control",
+          },
+        ],
+        excludedExperimentsBranches: [
+          {
+            excludedExperiment: excludedExperiment.id,
+            branchSlug: "treatment",
+          },
+        ],
+      };
+
+      render(<Subject {...{ experiment, onSubmit }} />);
+      await screen.findByTestId("FormAudience");
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      await selectEvent.select(required, [
+        `${requiredExperiment.name} (control branch)`,
+      ]);
+
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+      await selectEvent.select(excluded, [
+        `${excludedExperiment.name} (treatment branch)`,
+      ]);
+
+      const submitButton = screen.getByTestId("submit-button");
+
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit.mock.calls).toEqual([[expected, false]]);
+      });
+    });
+
+    it("saves required and excluded experiments with specific branches for rollouts", async () => {
+      const onSubmit = jest.fn();
+      const MOCK_EXPERIMENTS_BY_APPLICATION: getAllExperimentsByApplication_experimentsByApplication[] =
+        Array.from(mockDirectoryExperiments().entries()).map(
+          ([idx, experiment]) => ({
+            id: idx + 1,
+            name: experiment.name,
+            slug:
+              experiment.slug ??
+              experiment.name.toLowerCase().replace(" ", "-"),
+            publicDescription: "mock description",
+            referenceBranch: { slug: "control" },
+            treatmentBranches: [{ slug: "treatment" }],
+          }),
+        );
+      const experiment: getExperiment_experimentBySlug = mockExperimentQuery(
+        "demo-slug",
+        {
+          isRollout: true,
+          excludedExperimentsBranches: [],
+          requiredExperimentsBranches: [],
+        },
+      ).experiment;
+      const requiredExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+      const excludedExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[2];
+
+      const expected: ExperimentInput = {
+        channel: experiment.channel,
+        firefoxMinVersion: experiment.firefoxMinVersion,
+        firefoxMaxVersion: experiment.firefoxMaxVersion,
+        targetingConfigSlug: experiment.targetingConfigSlug,
+        populationPercent: experiment.populationPercent,
+        totalEnrolledClients: experiment.totalEnrolledClients,
+        proposedEnrollment: "" + experiment.proposedEnrollment,
+        proposedDuration: "" + experiment.proposedDuration,
+        countries: experiment.countries.map((v) => "" + v.id),
+        locales: experiment.locales.map((v) => "" + v.id),
+        languages: experiment.languages.map((v) => "" + v.id),
+        isSticky: experiment.isSticky,
+        isFirstRun: experiment.isFirstRun,
+        requiredExperimentsBranches: [
+          {
+            requiredExperiment: requiredExperiment.id,
+            branchSlug: "control",
+          },
+        ],
+        excludedExperimentsBranches: [
+          {
+            excludedExperiment: excludedExperiment.id,
+            branchSlug: "treatment",
+          },
+        ],
+      };
+
+      render(<Subject {...{ experiment, onSubmit }} />);
+      await screen.findByTestId("FormAudience");
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      await selectEvent.select(required, [
+        `${requiredExperiment.name} (control branch)`,
+      ]);
+
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+      await selectEvent.select(excluded, [
+        `${excludedExperiment.name} (treatment branch)`,
+      ]);
+
+      const submitButton = screen.getByTestId("submit-button");
+
+      fireEvent.click(submitButton);
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit.mock.calls).toEqual([[expected, false]]);
+      });
+    });
+
+    it("filters selected required experiment branches from the exclude field options", async () => {
+      const experiment = {
+        ...MOCK_EXPERIMENT,
+        name: MOCK_EXPERIMENTS_BY_APPLICATION[0].name,
+        slug: MOCK_EXPERIMENTS_BY_APPLICATION[0].slug,
+        id: MOCK_EXPERIMENTS_BY_APPLICATION[0].id,
+        excludedExperimentsBranches: [],
+        requiredExperimentsBranches: [],
+      };
+      const requiredExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+
+      const { container } = render(<Subject experiment={experiment} />);
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+      await selectEvent.select(required, [
+        `${requiredExperiment.name} (All branches)`,
+      ]);
+
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+      await selectEvent.openMenu(excluded);
+
+      const options = container.querySelectorAll(query("excludedExperiments"));
+
+      expect(options.length).toEqual(
+        countBranches(MOCK_EXPERIMENTS_BY_APPLICATION) - 6,
+      );
+      [experiment, requiredExperiment].forEach((filteredExperiment) => {
+        expect(
+          Array.from(options, (e) => e.textContent).filter((text) =>
+            text?.includes(filteredExperiment.slug),
+          ).length,
+        ).toEqual(0);
+      });
+    });
+
+    it("filters selected excluded experiment branch from the required field options", async () => {
+      const experiment = {
+        ...MOCK_EXPERIMENT,
+        name: MOCK_EXPERIMENTS_BY_APPLICATION[0].name,
+        slug: MOCK_EXPERIMENTS_BY_APPLICATION[0].slug,
+        id: MOCK_EXPERIMENTS_BY_APPLICATION[0].id,
+        excludedExperimentsBranches: [],
+        requiredExperimentsBranches: [],
+      };
+      const excludedExperiment = MOCK_EXPERIMENTS_BY_APPLICATION[1];
+
+      const { container } = render(<Subject experiment={experiment} />);
+      const excluded = screen.getByLabelText(/Exclude users enrolled/);
+
+      await selectEvent.openMenu(excluded);
+      await selectEvent.select(excluded, [
+        `${excludedExperiment.name} (All branches)`,
+      ]);
+
+      const required = screen.getByLabelText(/Require users to be enrolled/);
+      await selectEvent.openMenu(required);
+
+      const options = container.querySelectorAll(query("requiredExperiments"));
+
+      expect(options.length).toEqual(
+        countBranches(MOCK_EXPERIMENTS_BY_APPLICATION) - 6,
+      );
+      [experiment, excludedExperiment].forEach((filteredExperiment) => {
+        expect(
+          Array.from(options, (e) => e.textContent).filter((text) =>
+            text?.includes(filteredExperiment.slug),
+          ).length,
+        ).toEqual(0);
+      });
+    });
+  });
+
   it("renders without error", async () => {
     render(
       <Subject
@@ -842,17 +1345,38 @@ describe("FormAudience", () => {
     expect(screen.queryByTestId("locales")).not.toBeInTheDocument();
   });
 
-  it("isFirstRun renders for mobile application", async () => {
+  it.each(
+    Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+      MOBILE_APPLICATIONS.includes(application),
+    ),
+  )("isFirstRun renders for mobile application", (application) => {
     render(
       <Subject
         experiment={{
           ...MOCK_EXPERIMENT,
-          application: NimbusExperimentApplicationEnum.FENIX,
+          application,
         }}
       />,
     );
 
     expect(screen.queryByTestId("isFirstRun")).toBeInTheDocument();
+  });
+
+  it.each(
+    Object.values(NimbusExperimentApplicationEnum).filter(
+      (application) => !MOBILE_APPLICATIONS.includes(application),
+    ),
+  )("isFirstRun does not render for non mobile application", (application) => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application,
+        }}
+      />,
+    );
+
+    expect(screen.queryByTestId("isFirstRun")).not.toBeInTheDocument();
   });
 
   it("disables language field for desktop", async () => {
@@ -868,22 +1392,10 @@ describe("FormAudience", () => {
     expect(screen.queryByTestId("languages")).not.toBeInTheDocument();
     expect(screen.queryByTestId("locales")).toBeInTheDocument();
   });
-  it("isFirstRun does not renders for desktop application", async () => {
-    render(
-      <Subject
-        experiment={{
-          ...MOCK_EXPERIMENT,
-          application: NimbusExperimentApplicationEnum.DESKTOP,
-        }}
-      />,
-    );
-
-    expect(screen.queryByTestId("isFirstRun")).not.toBeInTheDocument();
-  });
 
   it("calls onSubmit when save and next buttons are clicked", async () => {
     const onSubmit = jest.fn();
-    const expected = {
+    const expected: ExperimentInput = {
       channel: MOCK_EXPERIMENT.channel,
       firefoxMinVersion: MOCK_EXPERIMENT.firefoxMinVersion,
       firefoxMaxVersion: MOCK_EXPERIMENT.firefoxMaxVersion,
@@ -897,8 +1409,35 @@ describe("FormAudience", () => {
       languages: MOCK_EXPERIMENT.languages.map((v) => "" + v.id),
       isSticky: MOCK_EXPERIMENT.isSticky,
       isFirstRun: MOCK_EXPERIMENT.isFirstRun,
+      excludedExperimentsBranches: [
+        {
+          excludedExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[0].id,
+          branchSlug: null,
+        },
+      ],
+      requiredExperimentsBranches: [
+        {
+          requiredExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[1].id,
+          branchSlug: null,
+        },
+      ],
     };
-    render(<Subject {...{ onSubmit }} />);
+    const experiment: getExperiment_experimentBySlug = {
+      ...MOCK_EXPERIMENT,
+      excludedExperimentsBranches: [
+        {
+          excludedExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[0],
+          branchSlug: null,
+        },
+      ],
+      requiredExperimentsBranches: [
+        {
+          requiredExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[1],
+          branchSlug: null,
+        },
+      ],
+    };
+    render(<Subject {...{ experiment, onSubmit }} />);
     await screen.findByTestId("FormAudience");
     const submitButton = screen.getByTestId("submit-button");
     const nextButton = screen.getByTestId("next-button");
@@ -959,6 +1498,121 @@ describe("FormAudience", () => {
         container.querySelector(`.invalid-feedback[data-for=${fieldName}]`),
       ).toHaveTextContent(FIELD_MESSAGES.POSITIVE_NUMBER);
     }
+  });
+
+  it("changing proposed release date sets form value", async () => {
+    const enteredDate = "2023-05-12";
+
+    const onSubmit = jest.fn();
+    render(
+      <Subject
+        {...{ onSubmit }}
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.FENIX,
+          isFirstRun: true,
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("FormAudience")).toBeInTheDocument();
+    });
+
+    const field = screen.getByTestId("proposedReleaseDate") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: enteredDate } });
+    const submitButton = screen.getByTestId("submit-button");
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].proposedReleaseDate).toEqual(enteredDate);
+  });
+
+  it("changing proposed release date to empty sets form value", async () => {
+    const expectedDate = "";
+    const onSubmit = jest.fn();
+
+    render(
+      <Subject
+        {...{ onSubmit }}
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.FENIX,
+          isFirstRun: true,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("FormAudience")).toBeInTheDocument();
+      expect(screen.queryByTestId("proposedReleaseDate")).toBeInTheDocument();
+    });
+
+    const submitButton = screen.getByTestId("submit-button");
+    await act(async () => {
+      fireEvent.click(submitButton);
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].proposedReleaseDate).toEqual(expectedDate);
+  });
+
+  it("only access proposed release date field for mobile applications", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.FENIX,
+          isFirstRun: true,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("isFirstRun")).toBeInTheDocument();
+      expect(screen.queryByTestId("proposedReleaseDate")).toBeInTheDocument();
+    });
+  });
+
+  it("cannot access proposed release date field for desktop applications", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.DESKTOP,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("isFirstRun")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("proposedReleaseDate"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("clicking proposed release date title takes you to whattrainisit", async () => {
+    const onSubmit = jest.fn();
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.FENIX,
+          isFirstRun: true,
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId("FormAudience")).toBeInTheDocument();
+    });
+
+    const tooltipInfo = screen.getByTestId("tooltip-proposed-release-date");
+    await act(async () => {
+      fireEvent.click(tooltipInfo);
+    });
+    expect(mockWindowOpen).toBeCalledWith(EXTERNAL_URLS.WHAT_TRAIN_IS_IT);
   });
 
   it("using the population percent text box sets form value", async () => {
@@ -1131,6 +1785,287 @@ describe("FormAudience", () => {
     ).getByTestId("population-percent-slider");
 
     expect((slider as HTMLInputElement).value).toEqual("50");
+  });
+
+  it("renders the pre-computed population sizing values", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.DESKTOP,
+          channel: NimbusExperimentChannelEnum.RELEASE,
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+            {
+              name: "Canada",
+              id: "2",
+              code: "CA",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+            {
+              name: "English (CA)",
+              id: "2",
+              code: "EN-CA",
+            },
+          ],
+        }}
+        config={{
+          ...MOCK_CONFIG,
+          applicationConfigs: [
+            {
+              application: NimbusExperimentApplicationEnum.DESKTOP,
+              channels: [{ label: "Release", value: "RELEASE" }],
+            },
+          ],
+          channels: [{ label: "Release", value: "RELEASE" }],
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+            {
+              name: "Canada",
+              id: "2",
+              code: "CA",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+            {
+              name: "English (CA)",
+              id: "2",
+              code: "EN-CA",
+            },
+          ],
+        }}
+      />,
+    );
+    await screen.findByTestId("FormAudience");
+    expect(
+      screen.getByText("Pre-computed population sizing data"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("10000 total", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryAllByText("Percent of clients:")).toHaveLength(12);
+    expect(screen.queryAllByText("Expected number of clients:")).toHaveLength(
+      12,
+    );
+  });
+
+  it("renders the pre-computed population sizing values for mobile", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.IOS,
+          channel: NimbusExperimentChannelEnum.RELEASE,
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+            {
+              name: "Canada",
+              id: "2",
+              code: "CA",
+            },
+          ],
+          languages: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+            {
+              name: "English (CA)",
+              id: "2",
+              code: "EN-CA",
+            },
+          ],
+        }}
+        config={{
+          ...MOCK_CONFIG,
+          applicationConfigs: [
+            {
+              application: NimbusExperimentApplicationEnum.IOS,
+              channels: [{ label: "Release", value: "RELEASE" }],
+            },
+          ],
+          channels: [{ label: "Release", value: "RELEASE" }],
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+            {
+              name: "Canada",
+              id: "2",
+              code: "CA",
+            },
+          ],
+          languages: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+            {
+              name: "English (CA)",
+              id: "2",
+              code: "EN-CA",
+            },
+          ],
+        }}
+      />,
+    );
+    await screen.findByTestId("FormAudience");
+    expect(
+      screen.getByText("Pre-computed population sizing data"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("10000 total", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryAllByText("Percent of clients:")).toHaveLength(12);
+    expect(screen.queryAllByText("Expected number of clients:")).toHaveLength(
+      12,
+    );
+  });
+
+  it("does not render the pre-computed population sizing values when no match found", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.DESKTOP,
+          channel: NimbusExperimentChannelEnum.BETA,
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+          ],
+        }}
+        config={{
+          ...MOCK_CONFIG,
+          applicationConfigs: [
+            {
+              application: NimbusExperimentApplicationEnum.DESKTOP,
+              channels: [
+                { label: "Release", value: "RELEASE" },
+                { label: "Beta", value: "BETA" },
+              ],
+            },
+          ],
+          channels: [
+            { label: "Release", value: "RELEASE" },
+            { label: "Beta", value: "BETA" },
+          ],
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+          ],
+        }}
+      />,
+    );
+    await screen.findByTestId("FormAudience");
+    expect(
+      screen.queryByText("Pre-computed population sizing data"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the pre-computed population sizing values when no sizing data is available", async () => {
+    render(
+      <Subject
+        experiment={{
+          ...MOCK_EXPERIMENT,
+          application: NimbusExperimentApplicationEnum.DESKTOP,
+          channel: NimbusExperimentChannelEnum.RELEASE,
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+          ],
+        }}
+        config={{
+          ...MOCK_CONFIG,
+          applicationConfigs: [
+            {
+              application: NimbusExperimentApplicationEnum.DESKTOP,
+              channels: [{ label: "Release", value: "RELEASE" }],
+            },
+          ],
+          channels: [{ label: "Release", value: "RELEASE" }],
+          countries: [
+            {
+              name: "United States of America",
+              id: "1",
+              code: "US",
+            },
+          ],
+          locales: [
+            {
+              name: "English (US)",
+              id: "1",
+              code: "EN-US",
+            },
+          ],
+          populationSizingData: "{}",
+        }}
+      />,
+    );
+    await screen.findByTestId("FormAudience");
+    expect(
+      screen.queryByText("Pre-computed population sizing data"),
+    ).not.toBeInTheDocument();
   });
 
   it("requires positive numbers in numeric fields (EXP-956)", async () => {
@@ -1562,6 +2497,82 @@ it("enables save buttons when not archived", async () => {
   expect(screen.getByTestId("next-button")).toBeEnabled();
 });
 
+it("disable enrollment period when experiment is a rollout", async () => {
+  render(
+    <Subject
+      experiment={{
+        ...MOCK_ROLLOUT,
+        application: NimbusExperimentApplicationEnum.DESKTOP,
+        channel: NimbusExperimentChannelEnum.NIGHTLY,
+        status: NimbusExperimentStatusEnum.DRAFT,
+        isRollout: true,
+        firefoxMinVersion: NimbusExperimentFirefoxVersionEnum.FIREFOX_107,
+      }}
+    />,
+  );
+
+  await waitFor(() => {
+    expect(screen.queryByTestId("proposedEnrollment")).toBeDisabled();
+    screen.getByTestId("tooltip-disabled");
+  });
+});
+
+it("enrollment period is not diabled when experiment is not a rollout", async () => {
+  render(
+    <Subject
+      experiment={{
+        ...MOCK_ROLLOUT,
+        application: NimbusExperimentApplicationEnum.DESKTOP,
+        channel: NimbusExperimentChannelEnum.NIGHTLY,
+        status: NimbusExperimentStatusEnum.DRAFT,
+        isRollout: false,
+        firefoxMinVersion: NimbusExperimentFirefoxVersionEnum.FIREFOX_107,
+      }}
+    />,
+  );
+  await waitFor(() => {
+    expect(screen.getByTestId("proposedEnrollment")).not.toBeDisabled();
+    expect(screen.queryByTestId("tooltip-disabled")).toBeNull();
+  });
+});
+
+it("disable fields for web application", async () => {
+  render(
+    <Subject
+      experiment={{
+        ...MOCK_EXPERIMENT,
+        application: NimbusExperimentApplicationEnum.MONITOR,
+        channel: NimbusExperimentChannelEnum.STAGING,
+        status: NimbusExperimentStatusEnum.DRAFT,
+        isWeb: true,
+        firefoxMinVersion: NimbusExperimentFirefoxVersionEnum.NO_VERSION,
+        firefoxMaxVersion: NimbusExperimentFirefoxVersionEnum.NO_VERSION,
+        populationPercent: "0",
+        proposedDuration: 0,
+        proposedEnrollment: 0,
+        proposedReleaseDate: "",
+        countries: [],
+        languages: [],
+      }}
+    />,
+  );
+  expect(screen.queryByTestId("firefoxMinVersion")).toBeDisabled();
+  screen.getByTestId("tooltip-disabled-min-version");
+
+  expect(screen.queryByTestId("firefoxMaxVersion")).toBeDisabled();
+  screen.getByTestId("tooltip-disabled-max-version");
+
+  const countriesDiv = document.querySelector('[data-testid="countries"]');
+  const selectCountriesElement = countriesDiv?.querySelector("input");
+  expect(selectCountriesElement).toHaveAttribute("disabled");
+
+  const languagesDiv = document.querySelector('[data-testid="languages"]');
+  const selectLanguagesElement = languagesDiv?.querySelector("input");
+  expect(selectLanguagesElement).toHaveAttribute("disabled");
+
+  expect(screen.queryByTestId("isSticky")).toBeDisabled();
+  screen.getByTestId("tooltip-disabled-is-sticky");
+});
 describe("filterAndSortTargetingConfigSlug", () => {
   it("filters for experiment application and sorts them as expected", () => {
     const expectedNoTargetingLabel = "No Targeting";
@@ -1678,6 +2689,7 @@ const renderSubjectWithDefaultValues = (onSubmit = () => {}) =>
         populationPercent: "0",
         proposedDuration: 0,
         proposedEnrollment: 0,
+        proposedReleaseDate: "",
         targetingConfigSlug: "",
         countries: [],
         locales: [],

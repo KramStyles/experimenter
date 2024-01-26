@@ -1,5 +1,6 @@
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
 
 from nimbus.pages.experimenter.base import ExperimenterBase
@@ -37,8 +38,20 @@ class AudiencePage(ExperimenterBase):
         By.CSS_SELECTOR,
         "div[data-testid='languages'] > div:nth-child(1)",
     )
-    _page_wait_locator = (By.CSS_SELECTOR, "#PageEditAudience")
+    _first_run_checkbox_locator = (By.CSS_SELECTOR, '[data-testid="isFirstRun"]')
+    _release_date_locator = (By.CSS_SELECTOR, '[data-testid="proposedReleaseDate"]')
+    _saved_locator = (By.CSS_SELECTOR, "form.was-validated")
+
     NEXT_PAGE = SummaryPage
+
+    def save_and_continue(self):
+        # Explicitly save and wait for save to complete before continuing
+        # to prevent intermittent failures where summary loads before saving
+        # audience is complete
+        self.save()
+        self.wait_for_locator(self._saved_locator)
+
+        return super().save_and_continue()
 
     @property
     def channel(self):
@@ -128,6 +141,39 @@ class AudiencePage(ExperimenterBase):
     @languages.setter
     def languages(self, text=None):
         el = self.wait_for_and_find_element(*self._languages_input_locator)
-        for _ in text:
-            el.send_keys(f"{_}")
+        for char in text:
+            el.send_keys(char)
             el.send_keys(Keys.ENTER)
+
+    @property
+    def is_first_run(self):
+        return self.wait_for_and_find_element(
+            *self._first_run_checkbox_locator, "is first run"
+        )
+
+    def make_first_run(self):
+        self.wait_for_and_find_element(
+            *self._first_run_checkbox_locator, "is_first_run"
+        ).click()
+
+    @property
+    def proposed_release_date(self):
+        el = self.wait_for_and_find_element(*self._release_date_locator)
+        return el.get_attribute("value")
+
+    @proposed_release_date.setter
+    def proposed_release_date(self, text=None):
+        el = self.wait_for_and_find_element(*self._release_date_locator)
+        el.send_keys(text)
+
+    def wait_until_release_date_not_found(self):
+        self.wait.until_not(
+            EC.presence_of_element_located(self._release_date_locator),
+            message="Audience Page: could not find release date",
+        )
+
+    def wait_until_first_run_not_found(self):
+        self.wait.until_not(
+            EC.presence_of_element_located(self._first_run_checkbox_locator),
+            message="Audience Page: could not find first run checkbox",
+        )

@@ -7,6 +7,7 @@ services:
     environment:
       - MOZ_HEADLESS
       - FIREFOX_VERSION
+      - PYTEST_ARGS
     volumes:
       - .:/code
       - /code/experimenter/tests/integration/.tox
@@ -14,6 +15,7 @@ services:
       - nginx
       - kinto
       - ping-server
+      - demo-app-frontend
     expose:
       - "4444"
     ports:
@@ -36,4 +38,9 @@ services:
   ping-server:
     build: experimenter/tests/integration/nimbus/utils/ping_server
     ports:
-      - "5000:5000"
+      - "5050:5050"
+  demo-app-frontend:
+    build:
+      context: ./demo-app/frontend
+      dockerfile: Dockerfile
+    command: /bin/true

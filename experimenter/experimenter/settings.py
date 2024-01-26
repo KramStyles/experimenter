@@ -12,13 +12,13 @@ https://docs.djangoproject.com/en/1.9/ref/settings/
 import json
 import os
 from importlib import resources
+from pathlib import Path
 from urllib.parse import urljoin
 
-import sentry_sdk
+from celery.schedules import crontab
 from decouple import config
 from django.contrib.admin import ModelAdmin, StackedInline, TabularInline
 from django.db.models import DecimalField, ForeignKey, JSONField, ManyToManyField
-from sentry_sdk.integrations.django import DjangoIntegration
 
 for cls in [
     DecimalField,
@@ -34,6 +34,7 @@ for cls in [
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 APP_VERSION_JSON_PATH = os.path.join(BASE_DIR, "version.json")
 APP_VERSION = config("APP_VERSION", default=None)
@@ -88,6 +89,7 @@ INSTALLED_APPS = [
     "widget_tweaks",
     # Experimenter
     "experimenter.base",
+    "experimenter.changelog",
     "experimenter.experiments",
     "experimenter.features",
     "experimenter.jetstream",
@@ -99,7 +101,12 @@ INSTALLED_APPS = [
     "experimenter.outcomes",
     "experimenter.projects",
     "experimenter.reporting",
+    "fontawesomefree",
+    "tailwind",
+    "experimenter.theme",
 ]
+
+TAILWIND_APP_NAME = "theme"
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -123,6 +130,7 @@ TEMPLATES = [
             os.path.join(BASE_DIR, "legacy", "legacy-ui", "templates"),
             os.path.join(BASE_DIR, "nimbus-ui", "templates"),
             os.path.join(BASE_DIR, "docs"),
+            os.path.join(BASE_DIR, "templates"),
         ],
         "APP_DIRS": True,
         "OPTIONS": {
@@ -131,7 +139,6 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "experimenter.base.context_processors.google_analytics",
                 "experimenter.base.context_processors.features",
                 "experimenter.base.context_processors.debug",
             ],
@@ -160,6 +167,11 @@ DATABASES = {
 
 # Graphene Schema
 GRAPHENE = {"SCHEMA": "experimenter.experiments.api.v5.schema"}
+
+if DEBUG:  # pragma: no cover
+    GRAPHENE["MIDDLEWARE"] = [
+        "experimenter.base.graphene.GrapheneExceptionMiddleware",
+    ]
 
 
 # Password validation
@@ -210,17 +222,20 @@ STATICFILES_DIRS = [
     ("scripts", os.path.join(BASE_DIR, "legacy", "legacy-ui", "scripts")),
     ("imgs", os.path.join(BASE_DIR, "legacy", "legacy-ui", "imgs")),
     ("nimbus", os.path.join(BASE_DIR, "nimbus-ui", "build")),
+    os.path.join(BASE_DIR, "static"),
 ]
 
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 MEDIA_URL = "/media/"
 
 
-LOGGING_CONSOLE_LEVEL = config("LOGGING_CONSOLE_LEVEL", default="DEBUG")
+LOGGING_CONSOLE_LEVEL = config("LOGGING_CONSOLE_LEVEL", default="DEBUG")  # Legacy env var
+LOG_LEVEL = config("LOG_LEVEL", default=LOGGING_CONSOLE_LEVEL)
 
 # Logging
 
-LOGGING_USE_JSON = config("LOGGING_USE_JSON", cast=bool, default=True)
+_logging_use_json = config("LOGGING_USE_JSON", cast=bool, default=True)  # Legacy env var
+LOG_FORMAT = config("LOG_FORMAT", default="mozlog" if _logging_use_json else "text")
 
 LOGGING = {
     "version": 1,
@@ -230,13 +245,13 @@ LOGGING = {
             "()": "dockerflow.logging.JsonLogFormatter",
             "logger_name": "experimenter",
         },
-        "verbose": {"format": "%(levelname)s %(asctime)s %(name)s %(message)s"},
+        "text": {"format": "%(levelname)s %(asctime)s %(name)s %(message)s"},
     },
     "handlers": {
         "console": {
-            "level": LOGGING_CONSOLE_LEVEL,
+            "level": LOG_LEVEL,
             "class": "logging.StreamHandler",
-            "formatter": "mozlog" if LOGGING_USE_JSON else "verbose",
+            "formatter": LOG_FORMAT,
         }
     },
     "loggers": {
@@ -257,19 +272,8 @@ LOGGING = {
 
 # Sentry configuration
 SENTRY_DSN = config("SENTRY_DSN", default=None)
+SENTRY_ENV = config("SENTRY_ENV", default=None)
 SENTRY_DSN_NIMBUS_UI = SENTRY_DSN
-if SENTRY_DSN:  # pragma: no cover
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        integrations=[DjangoIntegration()],
-        # Set traces_sample_rate to 1.0 to capture 100%
-        # of transactions for performance monitoring.
-        # We recommend adjusting this value in production.
-        traces_sample_rate=1.0,
-        # If you wish to associate users to errors (assuming you are using
-        # django.contrib.auth) you may enable sending PII data.
-        send_default_pii=False,
-    )
 
 
 # Django Rest Framework Configuration
@@ -287,7 +291,6 @@ CORS_ORIGIN_ALLOW_ALL = True
 # Experiments list pagination
 EXPERIMENTS_PAGINATE_BY = config("EXPERIMENTS_PAGINATE_BY", default=10, cast=int)
 
-USE_GOOGLE_ANALYTICS = config("USE_GOOGLE_ANALYTICS", default=True, cast=bool)
 
 # Automated email destinations
 
@@ -343,10 +346,17 @@ REDIS_HOST = config("REDIS_HOST")
 REDIS_PORT = config("REDIS_PORT")
 REDIS_DB = config("REDIS_DB")
 
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "TIMEOUT": None,
+    },
+}
+SIZING_DATA_KEY = "population_sizing"
+
 # Celery
-CELERY_BROKER_URL = "redis://{host}:{port}/{db}".format(
-    host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB
-)
+CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 CELERY_BEAT_SCHEDULE = {
     "experiment_status_ready_to_ship_task": {
         "task": "experimenter.legacy.normandy.tasks.update_recipe_ids_to_experiments",
@@ -372,7 +382,11 @@ CELERY_BEAT_SCHEDULE = {
     },
     "fetch_jetstream_data": {
         "task": "experimenter.jetstream.tasks.fetch_jetstream_data",
-        "schedule": 28800,
+        "schedule": crontab(minute=0, hour="*/6"),
+    },
+    "fetch_population_sizing_data": {
+        "task": "experimenter.jetstream.tasks.fetch_population_sizing_data",
+        "schedule": 86400,
     },
 }
 
@@ -449,6 +463,7 @@ KINTO_BUCKET_WORKSPACE = "main-workspace"
 KINTO_BUCKET_MAIN = "main"
 KINTO_COLLECTION_NIMBUS_DESKTOP = "nimbus-desktop-experiments"
 KINTO_COLLECTION_NIMBUS_MOBILE = "nimbus-mobile-experiments"
+KINTO_COLLECTION_NIMBUS_WEB = "nimbus-web-experiments"
 KINTO_COLLECTION_NIMBUS_PREVIEW = "nimbus-preview"
 KINTO_ADMIN_URL = config("KINTO_ADMIN_URL", default=urljoin(KINTO_HOST, "/admin/"))
 KINTO_REVIEW_TIMEOUT = config("KINTO_REVIEW_TIMEOUT", cast=int)
@@ -476,8 +491,7 @@ JETSTREAM_CONFIG_OUTCOMES_PATH = os.path.join(
 )
 
 # Feature Manifest path
-FEATURE_MANIFESTS_PATH = os.path.join(BASE_DIR, "features", "manifests")
-FEATURE_SCHEMAS_PATH = os.path.join(FEATURE_MANIFESTS_PATH, "schemas")
+FEATURE_MANIFESTS_PATH = Path(BASE_DIR, "features", "manifests")
 
 SKIP_REVIEW_ACCESS_CONTROL_FOR_DEV_USER = config(
     "SKIP_REVIEW_ACCESS_CONTROL_FOR_DEV_USER", default=False, cast=bool

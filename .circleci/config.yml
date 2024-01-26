@@ -1,77 +1,138 @@
 version: 2.1
 orbs:
-  gh: circleci/github-cli@2.0
-jobs:
-  check_branch:
-    machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
-      docker_layer_caching: true
-    resource_class: large
-    working_directory: ~/experimenter
+  gh: circleci/github-cli@2.2
+  gcp-cli: circleci/gcp-cli@3.1.1
+commands:
+  check_file_paths:
+    description: "Check file paths"
+    parameters:
+      paths:
+        type: string
+        default: ""
     steps:
       - run:
-          name: Docker info
-          command: docker -v
-      - run:
-          name: Docker compose info
-          command: docker-compose -v
-      - checkout
-      - run:
-          name: Run tests and linting
+          name: Check file paths
           command: |
-            if git diff --name-only main HEAD | grep -E 'experimenter/'
+            # Check if CIRCLE_BRANCH is "main" and skip the check
+            if [ "$CIRCLE_BRANCH" == "main" ]; then
+                echo "On main branch. Skipping path checks."
+                exit 0
+            fi
+
+            diff_output=$(git diff --name-only main HEAD)
+            echo "Changed files:"
+            echo "$diff_output"
+
+            if echo "$diff_output" | grep -E '<< parameters.paths >>|^[^/]+$|^.circleci/'
               then
-                echo "Changes detected in /experimenter directory. Running Experimenter tests and linting."
-                cp .env.sample .env
-                make check
+                echo "Changes detected in << parameters.paths >> or .circleci or root directory. Running tests and linting."
               else
-                echo "No changes in /experimenter directory. Skipping tests and linting."
+                echo "No changes in << parameters.paths >> or .circleci or root directory. Skipping tests and linting."
                 circleci-agent step halt
             fi
 
-  check_main:
+  docker_login:
+    description: "Login to Docker"
+    parameters:
+      username:
+        type: string
+      password:
+        type: string
+    steps:
+      - run: |
+          echo "<< parameters.password >>" | docker login --username << parameters.username >> --password-stdin
+
+
+jobs:
+  check_experimenter_x86_64:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     steps:
-      - run:
-          name: Docker info
-          command: docker -v
-      - run:
-          name: Docker compose info
-          command: docker-compose -v
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run tests and linting
           command: |
             cp .env.sample .env
             make check
 
+  check_experimenter_aarch64:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    resource_class: arm.large
+    working_directory: ~/experimenter
+    steps:
+      - checkout
+      - check_file_paths:
+          paths: "experimenter/"
+      - run:
+          name: Run tests and linting
+          command: |
+            cp .env.sample .env
+            make check
+
+  check_cirrus_x86_64:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    resource_class: large
+    working_directory: ~/cirrus
+    steps:
+      - checkout
+      - check_file_paths:
+          paths: "cirrus/"
+      - run:
+          name: Run Cirrus tests and linting
+          command: |
+            make cirrus_check -v
+
+  check_cirrus_aarch64:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    resource_class: arm.large
+    working_directory: ~/cirrus
+    steps:
+      - checkout
+      - check_file_paths:
+          paths: "cirrus/"
+      - run:
+          name: Run Cirrus tests and linting
+          command: |
+            make cirrus_check -v
+
+  check_schemas:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    steps:
+      - checkout
+      - check_file_paths:
+          paths: "schemas/"
+      - run:
+          name: Run Schemas tests and linting
+          command: |
+            make schemas_check
 
   integration_nimbus_desktop_release_targeting:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 4
+      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 4 --reruns 1
       MOZ_REMOTE_SETTINGS_DEVTOOLS: 1 # allows us to override and set the remote settings URL
     steps:
       - checkout
-      - run:
-          name: Check file paths
-          command: |
-            if git diff --name-only main HEAD | grep -E 'experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests'
-              then
-                echo "Continuing"
-              else
-                echo "No targeting changes, skipping"
-                circleci-agent step halt
-            fi
+      - check_file_paths:
+          paths: "experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests"
       - run:
           name: Run integration tests
           command: |
@@ -82,26 +143,18 @@ jobs:
 
   integration_nimbus_desktop_beta_targeting:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-beta
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 4
+      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 4 --reruns 1
       MOZ_REMOTE_SETTINGS_DEVTOOLS: 1 # allows us to override and set the remote settings URL
     steps:
       - checkout
-      - run:
-          name: Check file paths
-          command: |
-            if git diff --name-only main HEAD | grep -E 'experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests'
-              then
-                echo "Continuing"
-              else
-                echo "No targeting changes, skipping"
-                circleci-agent step halt
-            fi
+      - check_file_paths:
+          paths: "experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests"
       - run:
           name: Run integration tests
           command: |
@@ -112,26 +165,18 @@ jobs:
 
   integration_nimbus_desktop_nightly_targeting:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 2
+      PYTEST_ARGS: -k FIREFOX_DESKTOP -m run_targeting -n 2 --reruns 1
       UPDATE_FIREFOX_VERSION: true
     steps:
       - checkout
-      - run:
-          name: Check file paths
-          command: |
-            if git diff --name-only main HEAD | grep -E 'experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests'
-              then
-                echo "Continuing"
-              else
-                echo "No targeting changes, skipping"
-                circleci-agent step halt
-            fi
+      - check_file_paths:
+          paths: "experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests"
       - run:
           name: Run integration tests
           command: |
@@ -142,15 +187,17 @@ jobs:
 
   integration_nimbus_desktop_remote_settings:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m remote_settings
+      PYTEST_ARGS: -k FIREFOX_DESKTOP -m remote_settings --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -161,15 +208,17 @@ jobs:
 
   integration_nimbus_fenix_remote_settings:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: medium
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FENIX -m remote_settings
+      PYTEST_ARGS: -k FIREFOX_FENIX -m remote_settings --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -180,15 +229,17 @@ jobs:
 
   integration_nimbus_ios_remote_settings:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: medium
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k 'not (FOCUS_IOS or DESKTOP or FENIX or FOCUS_ANDROID)' -m remote_settings
+      PYTEST_ARGS: -k FIREFOX_IOS -m remote_settings --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -199,15 +250,17 @@ jobs:
 
   integration_nimbus_focus_android_remote_settings:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: medium
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FOCUS_ANDROID -m remote_settings
+      PYTEST_ARGS: -k FOCUS_ANDROID -m remote_settings --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -218,15 +271,17 @@ jobs:
 
   integration_nimbus_focus_ios_remote_settings:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: medium
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FOCUS_IOS -m remote_settings
+      PYTEST_ARGS: -k FOCUS_IOS -m remote_settings --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -237,16 +292,18 @@ jobs:
 
   integration_nimbus_desktop_enrollment:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: xlarge
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m desktop_enrollment
+      PYTEST_ARGS: -k FIREFOX_DESKTOP -m desktop_enrollment --reruns 1
       UPDATE_FIREFOX_VERSION: true
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -258,15 +315,17 @@ jobs:
 
   integration_nimbus_desktop_ui:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
-      PYTEST_ARGS: -k FIREFOX_DESKTOP -m nimbus_ui -n 2
+      PYTEST_ARGS: -m nimbus_ui -n 2 --reruns 1
     steps:
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -277,46 +336,59 @@ jobs:
 
   integration_nimbus_sdk_targeting:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: medium
     working_directory: ~/experimenter
+    environment:
+      PYTEST_ARGS: -k FIREFOX_FENIX
     steps:
       - checkout
-      - run:
-          name: Check file paths
-          command: |
-            if git diff --name-only main HEAD | grep -E 'experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests'
-              then
-                echo "Continuing"
-              else
-                echo "No targeting changes, skipping"
-                circleci-agent step halt
-            fi
+      - check_file_paths:
+          paths: "experimenter/experimenter/targeting|experimenter/experimenter/experiments|experimenter/tests"
       - run:
           name: Run rust integration tests
           command: |
             cp .env.integration-tests .env
+            docker pull mozilla/experimenter:nimbus-rust-image
             make refresh SKIP_DUMMY=1 PYTEST_SENTRY_DSN=$PYTEST_SENTRY_DSN CIRCLECI=$CIRCLECI up_prod_detached integration_test_nimbus_rust PYTEST_ARGS="$PYTEST_ARGS"
+      - store_artifacts:
+          path: ~/experimenter/experimenter/tests/integration/test-reports/report.htm
+
+  integration_nimbus_cirrus:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    resource_class: large
+    working_directory: ~/experimenter
+    environment:
+      FIREFOX_VERSION: nimbus-firefox-release
+      PYTEST_ARGS: -k DEMO_APP -m cirrus_enrollment --reruns 1
+    steps:
+      - checkout
+      - check_file_paths:
+          paths: "experimenter/"
+      - run:
+          name: Run integration tests
+          command: |
+            cp .env.integration-tests .env
+            export CIRRUS=1
+            make refresh SKIP_DUMMY=1 PYTEST_SENTRY_DSN=$PYTEST_SENTRY_DSN CIRCLECI=$CIRCLECI up_prod_detached integration_test_nimbus PYTEST_ARGS="$PYTEST_ARGS"
       - store_artifacts:
           path: ~/experimenter/experimenter/tests/integration/test-reports/report.htm
 
   integration_legacy:
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     resource_class: large
     working_directory: ~/experimenter
     environment:
       FIREFOX_VERSION: nimbus-firefox-release
     steps:
-      - run:
-          name: Docker info
-          command: docker -v
-      - run:
-          name: Docker compose info
-          command: docker-compose -v
       - checkout
+      - check_file_paths:
+          paths: "experimenter/"
       - run:
           name: Run integration tests
           command: |
@@ -325,33 +397,96 @@ jobs:
       - store_artifacts:
           path: ~/experimenter/experimenter/tests/integration/test-reports/report.htm
 
-  deploy:
+  deploy_experimenter:
     working_directory: ~/experimenter
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     steps:
       - checkout
-      - deploy:
-          name: Deploy to latest
+      - docker_login:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+      - run:
+          name: Deploy to Dockerhub
           command: |
-            docker login -u $DOCKER_USER -p $DOCKER_PASS
-            make build_dev build_test build_ui
             ./scripts/store_git_info.sh
             make build_prod
-            docker tag experimenter:dev ${DOCKERHUB_REPO}:build_dev
-            docker tag experimenter:test ${DOCKERHUB_REPO}:build_test
-            docker tag experimenter:ui ${DOCKERHUB_REPO}:build_ui
             docker tag experimenter:deploy ${DOCKERHUB_REPO}:latest
-            docker push ${DOCKERHUB_REPO}:build_dev
-            docker push ${DOCKERHUB_REPO}:build_test
-            docker push ${DOCKERHUB_REPO}:build_ui
+            docker tag experimenter:deploy ${DOCKERHUB_REPO}:latest-test
             docker push ${DOCKERHUB_REPO}:latest
+            docker push ${DOCKERHUB_REPO}:latest-test
+      - gcp-cli/setup
+      - run:
+          name: Deploy to Google Container Registry
+          command: |
+            echo $GCLOUD_SERVICE_KEY | gcloud auth activate-service-account --key-file=-
+            gcloud --quiet config set project ${GOOGLE_PROJECT_ID}
+            gcloud --quiet config set compute/zone ${GOOGLE_COMPUTE_ZONE}
+            gcloud auth configure-docker
+            DOCKER_IMAGE="gcr.io/${GOOGLE_PROJECT_ID}/experimenter"
+            docker tag experimenter:deploy ${DOCKER_IMAGE}:latest
+            docker push "${DOCKER_IMAGE}:latest"
+
+  deploy_cirrus:
+    working_directory: ~/cirrus
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    steps:
+      - checkout
+      - docker_login:
+          username: $DOCKERHUB_CIRRUS_USER
+          password: $DOCKERHUB_CIRRUS_PASS
+      - run:
+          name: Deploy to latest
+          command: |
+            make cirrus_build
+            docker tag cirrus:deploy ${DOCKERHUB_CIRRUS_REPO}:latest
+            docker push ${DOCKERHUB_CIRRUS_REPO}:latest
+
+  deploy_schemas:
+    machine:
+      image: ubuntu-2004:2023.10.1
+      docker_layer_caching: true
+    steps:
+      - checkout
+      - run:
+          name: Check for package version change in last commit before proceeding.
+          command: |
+            if git diff main HEAD~1 schemas/pyproject.toml | grep 'version'
+              then
+                echo "Found changes to package version dir, proceeding with deployment."
+              else
+                echo "No changes in package version. Skipping mozilla-nimbus-schemas deployment."
+                circleci-agent step halt
+            fi
+      - run:
+          name: Create the distribution files
+          command: |
+            make schemas_dist
+      - run:
+          name: Upload to PyPI
+          command: |
+            # Relies on the TWINE_USERNAME and TWINE_PASSWORD environment variables configured at:
+            #   https://app.circleci.com/settings/project/github/mozilla/experimenter/environment-variables
+            # For more on twine, see:
+            #   https://twine.readthedocs.io/en/latest/
+            make schemas_deploy_pypi SCHEMAS_ENV="-e TWINE_USERNAME=${TWINE_USERNAME} -e TWINE_PASSWORD=${TWINE_PASSWORD}"
+      - run:
+          name: NPM Authentication
+          command: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run:
+          name: Upload to NPM
+          command: |
+            # Relies on the NPM_TOKEN environment variable configured at:
+            #   https://app.circleci.com/settings/project/github/mozilla/experimenter/environment-variables
+            make schemas_deploy_npm SCHEMAS_ENV="-e NPM_TOKEN=${NPM_TOKEN}"
 
   update_external_configs:
     working_directory: ~/experimenter
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     steps:
       - add_ssh_keys:
@@ -371,8 +506,10 @@ jobs:
           command: |
             git checkout main
             git pull origin main
-            make fetch_external_resources
-            if (($(git status --porcelain | wc -c) > 0))
+            cp .env.sample .env
+            env GITHUB_BEARER_TOKEN="${GH_TOKEN}" make fetch_external_resources FETCH_ARGS="--summary fetch-summary.txt"
+            mv ./experimenter/fetch-summary.txt /tmp/fetch-summary.txt
+            if python3 ./experimenter/bin/should-pr.py
               then
                 git checkout -B external-config
                 git add .
@@ -380,7 +517,8 @@ jobs:
                 if (($((git diff external-config origin/external-config || git diff HEAD~1) | wc -c) > 0))
                   then
                     git push origin external-config -f
-                    gh pr create -t "chore(nimbus): Update External Configs" -b "" --base main --head external-config --repo mozilla/experimenter || echo "PR already exists, skipping"
+                    gh pr create -t "chore(nimbus): Update External Configs" -F /tmp/fetch-summary.txt --base main --head external-config --repo mozilla/experimenter || \
+                      gh pr edit external-config -F /tmp/fetch-summary.txt
                   else
                     echo "Changes already committed, skipping"
                 fi
@@ -391,10 +529,13 @@ jobs:
   build_firefox_versions:
     working_directory: ~/experimenter
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     steps:
       - checkout
+      - docker_login:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
       - run:
           name: Check for Firefox Update
           command: |
@@ -438,7 +579,6 @@ jobs:
             docker_id=$(docker ps -aqf "name=^firefox-beta-build")
             docker cp /home/circleci/experimenter/old_versions.txt $docker_id:/old_versions.txt
             docker commit $docker_id ${DOCKERHUB_REPO}:nimbus-firefox-beta
-            docker login -u $DOCKER_USER -p $DOCKER_PASS
             docker push ${DOCKERHUB_REPO}:nimbus-firefox-beta
             docker push ${DOCKERHUB_REPO}:nimbus-firefox-release
       - save_cache:
@@ -449,10 +589,13 @@ jobs:
   build_rust_image:
     working_directory: ~/experimenter
     machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
+      image: ubuntu-2004:2023.10.1
       docker_layer_caching: true
     steps:
       - checkout
+      - docker_login:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
       - run:
           name: Check for tag change
           command: |
@@ -477,41 +620,14 @@ jobs:
             AS_VERSION=$(git -c 'versionsort.suffix=-' \
               ls-remote --exit-code --refs --sort='version:refname' --tags https://github.com/mozilla/application-services.git \
               '*.*.*' | tail --lines=1 | cut --delimiter='/' --fields=3)
-            docker build -t ${DOCKERHUB_REPO}:nimbus-rust-image -f experimenter/tests/integration/nimbus/utils/Dockerfile-rust-image --build-arg as_version=$AS_VERSION --progress=plain .
+            docker buildx build -t ${DOCKERHUB_REPO}:nimbus-rust-image -f experimenter/tests/integration/nimbus/utils/Dockerfile-rust-image --build-arg as_version=$AS_VERSION --progress=plain .
             docker_id=$(docker run -t -d --name nimbus-rust-image ${DOCKERHUB_REPO}:nimbus-rust-image)
             docker cp /home/circleci/experimenter/application-services-current.txt nimbus-rust-image:/code/application-services-old.txt
             docker commit $docker_id ${DOCKERHUB_REPO}:nimbus-rust-image
-            docker login -u $DOCKER_USER -p $DOCKER_PASS
             docker push ${DOCKERHUB_REPO}:nimbus-rust-image
-  cirrus_check:
-    machine:
-      image: ubuntu-2004:202107-02 # Ubuntu 20.04, Docker v20.10.7, Docker Compose v1.29.2
-      docker_layer_caching: true
-    resource_class: large
-    working_directory: ~/cirrus
-    steps:
-      - run:
-          name: Docker info
-          command: docker -v
-      - run:
-          name: Docker compose info
-          command: docker-compose -v
-      - checkout
-      - run:
-          name: Run Cirrus tests and linting
-          command: |
-            if git diff --name-only main HEAD | grep -E 'cirrus/'
-              then
-                echo "Changes detected in /cirrus directory. Running Cirrus tests and linting."
-                make cirrus_check
-              else
-                echo "No changes in /cirrus directory. Skipping tests and linting."
-                circleci-agent step halt
-            fi
 
 workflows:
-  version: 2
-  weekly:
+  build_firefox:
     triggers:
       - schedule:
           cron: "0 0 * * *"
@@ -523,7 +639,7 @@ workflows:
       - build_firefox_versions
       - build_rust_image
 
-  hourly:
+  update_configs:
     triggers:
       - schedule:
           cron: "0 * * * *"
@@ -536,24 +652,20 @@ workflows:
 
   build:
     jobs:
-      - check_branch:
-          name: Check Experimenter (Branch)
+      - check_experimenter_x86_64:
+          name: Check Experimenter x86_64
+      - check_experimenter_aarch64:
+          name: Check Experimenter aarch64
+      - check_cirrus_x86_64:
+          name: Check Cirrus x86_64
+      - check_cirrus_aarch64:
+          name: Check Cirrus aarch64
+      - check_schemas:
+          name: Check Schemas
           filters:
             branches:
               ignore:
                 - main
-      - check_main:
-          name: Check Experimenter (Main)
-          filters:
-            branches:
-              only: main
-      - deploy:
-          name: Deploy Experimenter
-          filters:
-            branches:
-              only: main
-          requires:
-            - Check Experimenter (Main)
       - integration_nimbus_desktop_release_targeting:
           name: Test Desktop Targeting (Release Firefox)
           filters:
@@ -620,11 +732,37 @@ workflows:
             branches:
               ignore:
                 - main
+      - integration_nimbus_cirrus:
+          name: Test Demo app with Cirrus
+          filters:
+            branches:
+              ignore:
+                - main
       - integration_legacy:
           name: Test Legacy Desktop (Release Firefox)
           filters:
             branches:
               ignore:
                 - main
-      - cirrus_check:
-          name: Check Cirrus
+      - deploy_experimenter:
+          name: Deploy Experimenter
+          filters:
+            branches:
+              only: main
+          requires:
+            - Check Experimenter x86_64
+            - Check Experimenter aarch64
+      - deploy_cirrus:
+          name: Deploy Cirrus
+          filters:
+            branches:
+              only: main
+          requires:
+            - Check Cirrus x86_64
+            - Check Cirrus aarch64
+      - deploy_schemas:
+          name: Deploy Schemas
+          filters:
+            branches:
+              only: main
+

@@ -8,6 +8,7 @@ from experimenter.experiments.api.v5.types import (
     NimbusExperimentDocumentationLinkEnum,
     NimbusExperimentFirefoxVersionEnum,
     NimbusExperimentPublishStatusEnum,
+    NimbusExperimentQAStatusEnum,
     NimbusExperimentStatusEnum,
 )
 
@@ -19,7 +20,7 @@ class BranchScreenshotInput(graphene.InputObjectType):
 
 
 class BranchFeatureValueInput(graphene.InputObjectType):
-    feature_config = graphene.Int()
+    feature_config = graphene.String()
     value = graphene.String()
 
 
@@ -28,7 +29,6 @@ class BranchInput(graphene.InputObjectType):
     name = graphene.String(required=True)
     description = graphene.String(required=True)
     ratio = graphene.Int(required=True)
-    feature_value = graphene.String()
     feature_values = graphene.List(BranchFeatureValueInput)
     screenshots = graphene.List(BranchScreenshotInput)
 
@@ -38,16 +38,26 @@ class DocumentationLinkInput(graphene.InputObjectType):
     link = graphene.String(required=True)
 
 
+class NimbusExperimentBranchThroughRequiredInput(graphene.InputObjectType):
+    required_experiment = graphene.NonNull(graphene.Int)
+    branch_slug = graphene.String()
+
+
+class NimbusExperimentBranchThroughExcludedInput(graphene.InputObjectType):
+    excluded_experiment = graphene.NonNull(graphene.Int)
+    branch_slug = graphene.String()
+
+
 class ExperimentInput(graphene.InputObjectType):
     application = NimbusExperimentApplicationEnum()
     changelog_message = graphene.String()
     channel = NimbusExperimentChannelEnum()
     conclusion_recommendation = NimbusExperimentConclusionRecommendationEnum()
-    conclusion_recommendation = NimbusExperimentConclusionRecommendationEnum()
-    countries = graphene.List(graphene.String)
     countries = graphene.List(graphene.String)
     documentation_links = graphene.List(DocumentationLinkInput)
-    feature_config_id = graphene.Int()
+    excluded_experiments_branches = graphene.List(
+        graphene.NonNull(NimbusExperimentBranchThroughExcludedInput)
+    )
     feature_config_ids = graphene.List(graphene.Int)
     firefox_max_version = NimbusExperimentFirefoxVersionEnum()
     firefox_min_version = NimbusExperimentFirefoxVersionEnum()
@@ -72,8 +82,12 @@ class ExperimentInput(graphene.InputObjectType):
     proposed_release_date = graphene.String()
     public_description = graphene.String()
     publish_status = NimbusExperimentPublishStatusEnum()
+    qa_comment = graphene.String()
+    qa_status = NimbusExperimentQAStatusEnum()
     reference_branch = graphene.Field(BranchInput)
-    risk_brand = graphene.Boolean()
+    required_experiments_branches = graphene.List(
+        graphene.NonNull(NimbusExperimentBranchThroughRequiredInput)
+    )
     risk_brand = graphene.Boolean()
     risk_mitigation_link = graphene.String()
     risk_partner_related = graphene.Boolean()
@@ -81,6 +95,9 @@ class ExperimentInput(graphene.InputObjectType):
     secondary_outcomes = graphene.List(graphene.String)
     status = NimbusExperimentStatusEnum()
     status_next = NimbusExperimentStatusEnum()
+    takeaways_metric_gain = graphene.Boolean(required=False)
+    takeaways_gain_amount = graphene.String()
+    takeaways_qbr_learning = graphene.Boolean(required=False)
     takeaways_summary = graphene.String()
     targeting_config_slug = graphene.String()
     total_enrolled_clients = graphene.Int()

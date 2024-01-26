@@ -31,7 +31,7 @@ class Outcomes:
 
     @classmethod
     def _load_outcomes(cls):
-        outcomes = []
+        outcomes: list[Outcome] = []
 
         app_name_application_config = {
             a.app_name: a for a in NimbusConstants.APPLICATION_CONFIGS.values()
@@ -43,9 +43,24 @@ class Outcomes:
                 if not outcome_name.endswith(".example"):
                     outcome_path = os.path.join(app_path, outcome_name)
 
-                    with open(outcome_path, "r") as outcome_file:
+                    with open(outcome_path) as outcome_file:
                         outcome_toml = outcome_file.read()
                         outcome_data = toml.loads(outcome_toml)
+
+                        metrics = []
+                        if "metrics" in outcome_data:
+                            metrics = [
+                                Metric(
+                                    slug=metric,
+                                    friendly_name=outcome_data["metrics"][metric].get(
+                                        "friendly_name"
+                                    ),
+                                    description=outcome_data["metrics"][metric].get(
+                                        "description"
+                                    ),
+                                )
+                                for metric in outcome_data["metrics"]
+                            ]
 
                         outcomes.append(
                             Outcome(
@@ -54,18 +69,7 @@ class Outcomes:
                                 friendly_name=outcome_data["friendly_name"],
                                 slug=os.path.splitext(outcome_name)[0],
                                 is_default=False,
-                                metrics=[
-                                    Metric(
-                                        slug=metric,
-                                        friendly_name=outcome_data["metrics"][metric].get(
-                                            "friendly_name"
-                                        ),
-                                        description=outcome_data["metrics"][metric].get(
-                                            "description"
-                                        ),
-                                    )
-                                    for metric in outcome_data["metrics"]
-                                ],
+                                metrics=metrics,
                             )
                         )
 

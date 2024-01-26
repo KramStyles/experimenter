@@ -4,6 +4,10 @@ from functools import lru_cache
 
 import requests
 
+from nimbus.models.base_dataclass import (
+    BaseExperimentApplications,
+)
+
 LOAD_DATA_RETRIES = 10
 LOAD_DATA_RETRY_DELAY = 1.0
 
@@ -114,6 +118,10 @@ def load_config_data():
                             id
                             name
                         }
+                        takeaways {
+                            label
+                            value
+                        }
                         types {
                             label
                             value
@@ -123,6 +131,7 @@ def load_config_data():
                             experiments
                             rollouts
                         }
+                        populationSizingData
                     }
                 }
                 """,
@@ -130,16 +139,24 @@ def load_config_data():
     )["data"]["nimbusConfig"]
 
 
-def load_targeting_configs(app="DESKTOP"):
+def load_targeting_configs(app=BaseExperimentApplications.FIREFOX_DESKTOP.value):
     config_data = load_config_data()
     return [
         item["value"]
         for item in config_data["targetingConfigs"]
-        if "DESKTOP" in app
-        and "DESKTOP" in item["applicationValues"]
-        or "DESKTOP" not in app
-        and "DESKTOP" not in item["applicationValues"]
+        if BaseExperimentApplications.FIREFOX_DESKTOP.value in app
+        and BaseExperimentApplications.FIREFOX_DESKTOP.value in item["applicationValues"]
+        or BaseExperimentApplications.FIREFOX_DESKTOP.value not in app
+        and BaseExperimentApplications.FIREFOX_DESKTOP.value
+        not in item["applicationValues"]
     ]
+
+
+def get_feature_id_as_string(slug, app):
+    config_data = load_config_data()["allFeatureConfigs"]
+    for f in config_data:
+        if f["slug"] == slug and f["application"] == app:
+            return str(f["id"])
 
 
 def load_experiment_data(slug):
@@ -160,20 +177,28 @@ def load_experiment_data(slug):
     )
 
 
-def create_basic_experiment(name, app, targeting, languages=[]):
+def create_basic_experiment(name, app, targeting=None, languages=None, is_rollout=False):
     config_data = load_config_data()
+
+    if languages is None:
+        languages = []
     language_ids = [l["id"] for l in config_data["languages"] if l["code"] in languages]
-    load_graphql_data(
+
+    if targeting is None:
+        targeting = load_targeting_configs()[0]
+
+    return load_graphql_data(
         {
             "operationName": "createExperiment",
             "variables": {
                 "input": {
                     "name": name,
                     "hypothesis": "Test hypothesis",
-                    "application": app.upper(),
+                    "application": app,
                     "languages": language_ids,
                     "changelogMessage": "test changelog message",
                     "targetingConfigSlug": targeting,
+                    "isRollout": is_rollout,
                 }
             },
             "query": """
@@ -189,19 +214,10 @@ def create_basic_experiment(name, app, targeting, languages=[]):
     )
 
 
-def create_desktop_experiment(slug, app, targeting, data):
-    # create a basic experiment via graphql so we can get an ID
-    create_basic_experiment(
-        slug,
-        app,
-        targeting,
-    )
-
+def update_experiment(slug, data):
     experiment_id = load_experiment_data(slug)["data"]["experimentBySlug"]["id"]
-
     data.update({"id": experiment_id})
-
-    load_graphql_data(
+    return load_graphql_data(
         {
             "operationName": "updateExperiment",
             "variables": {"input": data},
@@ -213,6 +229,18 @@ def create_desktop_experiment(slug, app, targeting, data):
                 }
             """,
         }
+    )
+
+
+def create_experiment(slug, app, data, targeting=None, is_rollout=False):
+    return (
+        create_basic_experiment(
+            slug,
+            app,
+            targeting=targeting,
+            is_rollout=is_rollout,
+        ),
+        update_experiment(slug, data),
     )
 
 

@@ -1,6 +1,6 @@
 # Mozilla Experimenter
 
-[![CircleCI](https://circleci.com/gh/mozilla/experimenter.svg?style=svg)](https://circleci.com/gh/mozilla/experimenter)
+[![CircleCI](https://circleci.com/gh/mozilla/experimenter.svg?style=svg)](https://circleci.com/gh/mozilla/experimenter) ![Status](https://img.shields.io/badge/Status-Invest-green)
 
 Experimenter is a platform for managing experiments in [Mozilla Firefox](https://www.mozilla.org/en-US/firefox/?utm_medium=referral&utm_source=firefox-com).
 
@@ -75,7 +75,7 @@ Check out the [🌩 **Nimbus Documentation Hub**](https://experimenter.info) or 
         - Click the activate and restart button to save your change.
     - Install Make and Git
         - Open the ubuntu terminal
-        - You should install make using this command `sudo apt-get update && sudo apt install make` in the ubuntu terminal. 
+        - You should install make using this command `sudo apt-get update && sudo apt install make` in the ubuntu terminal.
         This is necessary for the `make secretkey` command and other commands.
         - Ensure git is available by running `git --version`. If it's not recognized, install git using `sudo apt install git`
 
@@ -301,6 +301,16 @@ Populates the database with dummy experiments of all types/statuses using the te
 Run kill, migrate, load_locales_countries load_dummy_experiments. Useful for resetting your dev environment when switching branches or after package updates.
 
 ### Running a dev instance
+
+#### Enabling Cirrus
+
+Cirrus is required to run and test web application experiments locally.  It is disabled by default.  To enable Cirrus run:
+
+```sh
+export CIRRUS=1
+```
+
+This will be done automatically for any Cirrus related make commands.
 
 #### make up
 
@@ -534,7 +544,7 @@ Learn more about the organization of these UIs [here](./experimenter/experimente
 
 ## API
 
-API documentation can be found [here](https://htmlpreview.github.io/?https://github.com/mozilla/experimenter/blob/main/experimenter/experimenter/docs/swagger-ui.html)
+API documentation can be found [here](https://htmlpreview.github.io/?https://github.com/mozilla/experimenter/blob/main/docs/experimenter/swagger-ui.html)
 
 ## Contributing
 

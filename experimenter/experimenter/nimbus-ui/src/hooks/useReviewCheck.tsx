@@ -16,13 +16,13 @@ const fieldPageMap: { [page: string]: string[] } = {
     "risk_brand",
     "risk_revenue",
     "risk_partner_related",
-    "localizations",
   ],
   branches: [
     "reference_branch",
     "treatment_branches",
-    "feature_config",
+    "feature_configs",
     "is_rollout",
+    "localizations",
   ],
   audience: [
     "channel",
@@ -35,6 +35,8 @@ const fieldPageMap: { [page: string]: string[] } = {
     "proposed_duration",
     "population_percent",
     "total_enrolled_clients",
+    "required_experiments",
+    "excluded_experiments",
   ],
 };
 

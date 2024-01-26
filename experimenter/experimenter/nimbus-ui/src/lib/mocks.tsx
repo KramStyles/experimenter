@@ -17,6 +17,7 @@ import { DocumentNode, print } from "graphql";
 import React, { ReactNode } from "react";
 import { GET_CONFIG_QUERY } from "src/gql/config";
 import {
+  GET_ALL_EXPERIMENTS_BY_APPLICATION_QUERY,
   GET_EXPERIMENTS_QUERY,
   GET_EXPERIMENT_QUERY,
 } from "src/gql/experiments";
@@ -24,7 +25,7 @@ import { ReviewCheck } from "src/hooks";
 import { ResultsContext } from "src/lib/contexts";
 import { getStatus } from "src/lib/experiment";
 import { OutcomesList, OutcomeSlugs } from "src/lib/types";
-import { mockAnalysis } from "src/lib/visualization/mocks";
+import { mockAnalysis, MOCK_SIZING } from "src/lib/visualization/mocks";
 import { AnalysisData } from "src/lib/visualization/types";
 import { getSortedBranchNames } from "src/lib/visualization/utils";
 import { cacheConfig } from "src/services/apollo";
@@ -32,6 +33,7 @@ import {
   getAllExperiments,
   getAllExperiments_experiments,
 } from "src/types/getAllExperiments";
+import { getAllExperimentsByApplication_experimentsByApplication } from "src/types/getAllExperimentsByApplication";
 import { getConfig_nimbusConfig } from "src/types/getConfig";
 import {
   getExperiment,
@@ -45,11 +47,16 @@ import {
   NimbusExperimentDocumentationLinkEnum,
   NimbusExperimentFirefoxVersionEnum,
   NimbusExperimentPublishStatusEnum,
+  NimbusExperimentQAStatusEnum,
   NimbusExperimentStatusEnum,
 } from "src/types/globalTypes";
 
 export interface MockedProps {
   config?: Partial<typeof MOCK_CONFIG> | null;
+  experimentsByApplication?: Partial<{
+    allExperiments?: Partial<typeof MOCK_EXPERIMENTS_BY_APPLICATION>;
+    application?: NimbusExperimentApplicationEnum;
+  }>;
   childProps?: Record<any, any>;
   children?: React.ReactElement;
   mocks?: MockedResponse<Record<string, any>>[];
@@ -79,6 +86,14 @@ export const MOCK_CONFIG: getConfig_nimbusConfig = {
       label: "Android",
       value: NimbusExperimentApplicationEnum.FENIX,
     },
+    {
+      label: "Monitor",
+      value: NimbusExperimentApplicationEnum.MONITOR,
+    },
+  ],
+  takeaways: [
+    { label: "DAU Gain", value: "DAU_GAIN" },
+    { label: "QBR Learning", value: "QBR_LEARNING" },
   ],
   types: [
     { label: "Experiment", value: "EXPERIMENT" },
@@ -92,6 +107,9 @@ export const MOCK_CONFIG: getConfig_nimbusConfig = {
         "status_next",
         "status",
         "takeaways_summary",
+        "takeaways_qbr_learning",
+        "takeaways_metric_gain",
+        "takeaways_gain_amount",
         "conclusion_recommendation",
       ],
       experiments: [],
@@ -128,59 +146,35 @@ export const MOCK_CONFIG: getConfig_nimbusConfig = {
       value: "FOLLOWUP",
     },
   ],
-  applicationConfigs: [
-    {
-      application: NimbusExperimentApplicationEnum.DESKTOP,
-      channels: [
-        {
-          label: "Desktop Beta",
-          value: "BETA",
-        },
-        {
-          label: "Desktop Nightly",
-          value: "NIGHTLY",
-        },
-        {
-          label: "Platypus Doorstop",
-          value: "PLATYPUS_DOORSTOP",
-        },
-      ],
+  applicationConfigs: Object.values(NimbusExperimentApplicationEnum).map(
+    (application) => {
+      return {
+        application,
+        channels: [
+          {
+            label: "Desktop Beta",
+            value: "BETA",
+          },
+          {
+            label: "Desktop Nightly",
+            value: "NIGHTLY",
+          },
+          {
+            label: "Platypus Doorstop",
+            value: "PLATYPUS_DOORSTOP",
+          },
+          {
+            label: "Staging",
+            value: "STAGING",
+          },
+          {
+            label: "Production",
+            value: "PRODUCTION",
+          },
+        ],
+      };
     },
-    {
-      application: NimbusExperimentApplicationEnum.FENIX,
-      channels: [
-        {
-          label: "Desktop Beta",
-          value: "BETA",
-        },
-        {
-          label: "Desktop Nightly",
-          value: "NIGHTLY",
-        },
-        {
-          label: "Platypus Doorstop",
-          value: "PLATYPUS_DOORSTOP",
-        },
-      ],
-    },
-    {
-      application: NimbusExperimentApplicationEnum.IOS,
-      channels: [
-        {
-          label: "Desktop Beta",
-          value: "BETA",
-        },
-        {
-          label: "Desktop Nightly",
-          value: "NIGHTLY",
-        },
-        {
-          label: "Platypus Doorstop",
-          value: "PLATYPUS_DOORSTOP",
-        },
-      ],
-    },
-  ],
+  ),
   allFeatureConfigs: [
     {
       id: 1,
@@ -380,42 +374,51 @@ export const MOCK_CONFIG: getConfig_nimbusConfig = {
     {
       name: "Acholi",
       id: "1",
+      code: "Ac",
     },
     {
       name: "Afrikaans",
       id: "2",
+      code: "Af",
     },
     {
       name: "Albanian",
       id: "3",
+      code: "Al",
     },
   ],
   countries: [
     {
       name: "Eritrea",
       id: "1",
+      code: "Er",
     },
     {
       name: "Estonia",
       id: "2",
+      code: "Es",
     },
     {
       name: "Eswatini",
       id: "3",
+      code: "Es",
     },
   ],
   languages: [
     {
       name: "German",
       id: "1",
+      code: "Ge",
     },
     {
       name: "English",
       id: "2",
+      code: "En",
     },
     {
       name: "Fijian",
       id: "3",
+      code: "Fi",
     },
   ],
   projects: [
@@ -432,18 +435,53 @@ export const MOCK_CONFIG: getConfig_nimbusConfig = {
       id: "3",
     },
   ],
+  populationSizingData: JSON.stringify(MOCK_SIZING),
+  qaStatus: [
+    {
+      label: "RED",
+      value: NimbusExperimentQAStatusEnum.RED,
+    },
+    {
+      label: "YELLOW",
+      value: NimbusExperimentQAStatusEnum.YELLOW,
+    },
+    {
+      label: "GREEN",
+      value: NimbusExperimentQAStatusEnum.GREEN,
+    },
+    {
+      label: "NOT SET",
+      value: NimbusExperimentQAStatusEnum.NOT_SET,
+    },
+  ],
 };
 
 // Disabling this rule for now because we'll eventually
 // be using props from MockedProps.
 // eslint-disable-next-line no-empty-pattern
-export function createCache({ config = {} }: MockedProps = {}) {
+export function createCache({
+  config = {},
+  experimentsByApplication: {
+    allExperiments = MOCK_EXPERIMENTS_BY_APPLICATION,
+    application = NimbusExperimentApplicationEnum.DESKTOP,
+  } = {},
+}: MockedProps = {}) {
   const cache = new InMemoryCache(cacheConfig);
 
   cache.writeQuery({
     query: GET_CONFIG_QUERY,
     data: {
       nimbusConfig: { ...MOCK_CONFIG, ...config },
+    },
+  });
+
+  cache.writeQuery({
+    query: GET_ALL_EXPERIMENTS_BY_APPLICATION_QUERY,
+    variables: {
+      application: application,
+    },
+    data: {
+      experimentsByApplication: allExperiments,
     },
   });
 
@@ -554,10 +592,15 @@ export const MOCK_EXPERIMENT: Partial<getExperiment["experimentBySlug"]> = {
     slug: "control",
     description: "Behind almost radio result personal none future current.",
     ratio: 1,
-    featureValue: '{"environmental-fact": "really-citizen"}',
+    featureValues: [
+      {
+        featureConfig: { id: 1 },
+        value: '{"environmental-fact": "really-citizen"}',
+      },
+    ],
     screenshots: [],
   },
-  featureConfigs: [],
+  featureConfigs: [MOCK_CONFIG.allFeatureConfigs![0]],
   targetingConfig: [MOCK_CONFIG.targetingConfigs![0]],
   isSticky: false,
   isFirstRun: false,
@@ -568,7 +611,12 @@ export const MOCK_EXPERIMENT: Partial<getExperiment["experimentBySlug"]> = {
       slug: "treatment",
       description: "Next ask then he in degree order.",
       ratio: 1,
-      featureValue: '{"effect-effect-whole": "close-teach-exactly"}',
+      featureValues: [
+        {
+          featureConfig: { id: 1 },
+          value: '{"effect-effect-whole": "close-teach-exactly"}',
+        },
+      ],
       screenshots: [],
     },
   ],
@@ -583,6 +631,7 @@ export const MOCK_EXPERIMENT: Partial<getExperiment["experimentBySlug"]> = {
   totalEnrolledClients: 68000,
   proposedEnrollment: 1,
   proposedDuration: 28,
+  proposedReleaseDate: "",
   readyForReview: {
     ready: true,
     message: {},
@@ -594,7 +643,6 @@ export const MOCK_EXPERIMENT: Partial<getExperiment["experimentBySlug"]> = {
     legalSignoff: false,
   },
   startDate: new Date().toISOString(),
-  proposedReleaseDate: new Date().toISOString(),
   computedEndDate: new Date(Date.now() + 12096e5).toISOString(),
   computedDurationDays: 14,
   computedEnrollmentDays: 1,
@@ -615,11 +663,20 @@ export const MOCK_EXPERIMENT: Partial<getExperiment["experimentBySlug"]> = {
   riskPartnerRelated: false,
   reviewUrl:
     "https://kinto.example.com/v1/admin/#/buckets/main-workspace/collections/nimbus-desktop-experiments/simple-review",
-  locales: [{ name: "Quebecois", id: "1" }],
-  countries: [{ name: "Canada", id: "1" }],
-  languages: [{ name: "English", id: "1" }],
+  locales: [{ name: "Quebecois", id: "1", code: "Qu" }],
+  countries: [{ name: "Canada", id: "1", code: "Ca" }],
+  languages: [{ name: "English", id: "1", code: "En" }],
   projects: [{ name: "Pocket", id: "1" }],
   isLocalized: false,
+  localizations: null,
+  requiredExperimentsBranches: [],
+  excludedExperimentsBranches: [],
+  takeawaysQbrLearning: false,
+  takeawaysMetricGain: false,
+  takeawaysGainAmount: null,
+  qaComment: null,
+  qaStatus: NimbusExperimentQAStatusEnum.NOT_SET,
+  isWeb: false,
 };
 
 export const MOCK_LIVE_ROLLOUT: Partial<getExperiment["experimentBySlug"]> = {
@@ -649,13 +706,34 @@ export const MOCK_LIVE_ROLLOUT: Partial<getExperiment["experimentBySlug"]> = {
     description:
       "Policy success score. Education clear write. Where same create matter natural.",
     ratio: 1,
-    featureValue: '{"environmental-fact": "bingo-bongo"}',
+    featureValues: [
+      {
+        featureConfig: { id: 1 },
+        value: '{"environmental-fact": "bingo-bongo"}',
+      },
+    ],
     screenshots: [],
   },
   featureConfigs: [],
   targetingConfig: [MOCK_CONFIG.targetingConfigs![0]],
   isSticky: false,
   isFirstRun: false,
+  treatmentBranches: [
+    {
+      id: 456,
+      name: "Managed zero baby projection",
+      slug: "treatment",
+      description: "Next ask then he in degree order.",
+      ratio: 1,
+      featureValues: [
+        {
+          featureConfig: { id: 1 },
+          value: '{"effect-effect-whole": "close-teach-exactly"}',
+        },
+      ],
+      screenshots: [],
+    },
+  ],
   primaryOutcomes: ["picture_in_picture", "feature_c", "feature_nodata"],
   secondaryOutcomes: ["feature_b", "feature_d"],
   channel: NimbusExperimentChannelEnum.NIGHTLY,
@@ -667,6 +745,7 @@ export const MOCK_LIVE_ROLLOUT: Partial<getExperiment["experimentBySlug"]> = {
   totalEnrolledClients: 68000,
   proposedEnrollment: 1,
   proposedDuration: 28,
+  proposedReleaseDate: "",
   readyForReview: {
     ready: true,
     message: {},
@@ -678,7 +757,6 @@ export const MOCK_LIVE_ROLLOUT: Partial<getExperiment["experimentBySlug"]> = {
     legalSignoff: false,
   },
   startDate: new Date().toISOString(),
-  proposedReleaseDate: new Date(Date.now()).toISOString(),
   computedEndDate: new Date(Date.now() + 12096e5).toISOString(),
   computedDurationDays: 14,
   computedEnrollmentDays: 1,
@@ -699,10 +777,14 @@ export const MOCK_LIVE_ROLLOUT: Partial<getExperiment["experimentBySlug"]> = {
   riskPartnerRelated: false,
   reviewUrl:
     "https://kinto.example.com/v1/admin/#/buckets/main-workspace/collections/nimbus-desktop-experiments/simple-review",
-  locales: [{ name: "Quebecois", id: "1" }],
-  countries: [{ name: "Canada", id: "1" }],
-  languages: [{ name: "English", id: "1" }],
+  locales: [{ name: "Quebecois", id: "1", code: "Qu" }],
+  countries: [{ name: "Canada", id: "1", code: "Ca" }],
+  languages: [{ name: "English", id: "1", code: "En" }],
   projects: [{ name: "Pocket", id: "1" }],
+  requiredExperimentsBranches: [],
+  excludedExperimentsBranches: [],
+  qaComment: null,
+  qaStatus: NimbusExperimentQAStatusEnum.NOT_SET,
 };
 
 export function mockExperiment<
@@ -855,7 +937,7 @@ export function mockSingleDirectoryExperiment(
   return {
     isArchived: false,
     isRollout: false,
-    slug: `some-experiment-${slugIndex}`,
+    slug: `some-experiment-${String.fromCharCode(97 + slugIndex)}`,
     owner: {
       username: "example@mozilla.com",
     },
@@ -875,7 +957,6 @@ export function mockSingleDirectoryExperiment(
     populationPercent: "100",
     channel: NimbusExperimentChannelEnum.NIGHTLY,
     publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
-    featureConfig: MOCK_CONFIG.allFeatureConfigs![0],
     featureConfigs: [MOCK_CONFIG.allFeatureConfigs![0]],
     targetingConfig: [MOCK_CONFIG.targetingConfigs![0]],
     isEnrollmentPaused: false,
@@ -890,8 +971,11 @@ export function mockSingleDirectoryExperiment(
     resultsExpectedDate: new Date(expectedResultsTime).toISOString(),
     resultsReady: false,
     showResultsUrl: false,
+    takeawaysMetricGain: true,
+    takeawaysQbrLearning: false,
     projects: [MOCK_CONFIG.projects![0]],
     hypothesis: "test hypothesis",
+    qaStatus: NimbusExperimentQAStatusEnum.GREEN,
     ...overrides,
   };
 }
@@ -1018,6 +1102,16 @@ export function mockDirectoryExperimentsQuery(
     },
   };
 }
+
+export const MOCK_EXPERIMENTS_BY_APPLICATION: getAllExperimentsByApplication_experimentsByApplication[] =
+  Array.from(mockDirectoryExperiments().entries()).map(([idx, experiment]) => ({
+    id: idx + 1,
+    name: experiment.name,
+    slug: experiment.slug ?? experiment.name.toLowerCase().replace(" ", "-"),
+    publicDescription: "mock description",
+    referenceBranch: { slug: "control" },
+    treatmentBranches: [{ slug: "treatment" }],
+  }));
 
 // Basically the same as useOutcomes, but uses the mocked config values
 export function mockOutcomeSets(experiment: getExperiment_experimentBySlug): {

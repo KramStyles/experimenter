@@ -2,8 +2,18 @@ import os
 
 import pytest
 
+from nimbus.models.base_dataclass import (
+    BaseExperimentApplications,
+)
 from nimbus.pages.experimenter.home import HomePage
 from nimbus.pages.experimenter.summary import SummaryPage
+
+MOBILE_APPS = [
+    BaseExperimentApplications.FIREFOX_FENIX.value,
+    BaseExperimentApplications.FIREFOX_IOS.value,
+    BaseExperimentApplications.FOCUS_ANDROID.value,
+    BaseExperimentApplications.FOCUS_IOS.value,
+]
 
 
 @pytest.mark.nimbus_ui
@@ -85,16 +95,6 @@ def test_branch_screenshot(
 
 
 @pytest.mark.nimbus_ui
-def test_create_new_experiment_timeout_remote_settings(
-    selenium,
-    create_experiment,
-):
-    summary = create_experiment(selenium)
-    summary.launch_and_approve()
-    summary.wait_for_timeout_alert()
-
-
-@pytest.mark.nimbus_ui
 def test_every_form_page_can_be_resaved(
     selenium,
     create_experiment,
@@ -106,3 +106,70 @@ def test_every_form_page_can_be_resaved(
     audience = metrics.save_and_continue()
     summary = audience.save_and_continue()
     assert summary.experiment_slug is not None
+
+
+@pytest.mark.nimbus_ui
+def test_first_run_release_date_visible_for_mobile(
+    selenium,
+    kinto_client,
+    application,
+    create_experiment,
+    experiment_url,
+):
+    if application not in MOBILE_APPS:
+        pytest.skip(f"Skipping for {application}")
+
+    summary = create_experiment(selenium)
+
+    audience = summary.navigate_to_audience()
+    audience.make_first_run()
+    audience.proposed_release_date = "2023-12-12"
+
+    assert audience.is_first_run
+    assert audience.proposed_release_date == "2023-12-12"
+
+    summary = audience.save_and_continue()
+
+    assert summary.proposed_release_date == "2023-12-12"
+
+    summary.launch_and_approve()
+
+    kinto_client.approve()
+
+    summary = SummaryPage(selenium, experiment_url).open()
+    summary.wait_for_live_status()
+
+    assert summary.first_run
+    assert summary.proposed_release_date == "2023-12-12"
+
+
+@pytest.mark.nimbus_ui
+def test_first_run_release_date_not_visible_for_non_mobile(
+    selenium,
+    kinto_client,
+    application,
+    create_experiment,
+    experiment_url,
+):
+    if application in MOBILE_APPS:
+        pytest.skip(f"Skipping for {application}")
+
+    summary = create_experiment(selenium)
+
+    audience = summary.navigate_to_audience()
+
+    audience.wait_until_release_date_not_found()
+    audience.wait_until_first_run_not_found()
+
+    summary = audience.navigate_to_summary()
+    summary.launch_and_approve()
+
+    kinto_client.approve()
+
+    summary = SummaryPage(selenium, experiment_url).open()
+    summary.wait_for_live_status()
+
+    summary.wait_for_timeline_visible()
+    summary.wait_until_timeline_release_date_not_found()
+    summary.wait_until_audience_release_date_not_found()
+    summary.wait_until_audience_first_run_not_found()

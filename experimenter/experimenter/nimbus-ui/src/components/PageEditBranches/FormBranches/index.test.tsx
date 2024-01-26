@@ -3,7 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import React from "react";
+import selectEvent from "react-select-event";
 import {
   MOCK_BRANCH,
   MOCK_EXPERIMENT,
@@ -12,9 +14,13 @@ import {
   MOCK_FEATURE_CONFIG_WITH_SETS_PREFS,
   SubjectBranches,
 } from "src/components/PageEditBranches/FormBranches/mocks";
-import { extractUpdateBranch } from "src/components/PageEditBranches/FormBranches/reducer/update";
+import { AnnotatedBranch } from "src/components/PageEditBranches/FormBranches/reducer";
+import {
+  extractUpdateBranch,
+  FormData,
+} from "src/components/PageEditBranches/FormBranches/reducer/update";
 import { SERVER_ERRORS } from "src/lib/constants";
-import { MOCK_CONFIG } from "src/lib/mocks";
+import { mockExperimentQuery, MOCK_CONFIG } from "src/lib/mocks";
 import { assertSerializerMessages } from "src/lib/test-utils";
 import {
   NimbusExperimentApplicationEnum,
@@ -54,21 +60,61 @@ describe("FormBranches", () => {
 
   it("calls onSave with extracted update when save button clicked", async () => {
     const onSave = jest.fn();
+    const formData: FormData = {
+      referenceBranch: {
+        featureValues: [
+          {
+            featureConfig:
+              MOCK_EXPERIMENT.referenceBranch!.featureValues![0]!.featureConfig!.id!.toString(),
+            value: MOCK_EXPERIMENT.referenceBranch!.featureValues![0]!.value,
+          },
+        ],
+      },
+      treatmentBranches: [
+        {
+          featureValues: [
+            {
+              featureConfig:
+                MOCK_EXPERIMENT.treatmentBranches![0]!.featureValues![0]!.featureConfig!.id!.toString(),
+              value:
+                MOCK_EXPERIMENT.treatmentBranches![0]!.featureValues![0]!.value,
+            },
+          ],
+        },
+        {
+          featureValues: [
+            {
+              featureConfig:
+                MOCK_EXPERIMENT.treatmentBranches![1]!.featureValues![0]!.featureConfig!.id!.toString(),
+              value:
+                MOCK_EXPERIMENT.treatmentBranches![1]!.featureValues![0]!.value,
+            },
+          ],
+        },
+      ],
+    };
     render(<SubjectBranches {...{ onSave }} />);
     await clickAndWaitForSave(onSave);
     const onSaveArgs = onSave.mock.calls[0];
-    expect(onSaveArgs[0]).toEqual({
+    const expectedData = {
       featureConfigIds: [],
-      // @ts-ignore type mismatch covers discarded annotation properties
-      referenceBranch: extractUpdateBranch(MOCK_EXPERIMENT.referenceBranch!),
-      treatmentBranches: MOCK_EXPERIMENT.treatmentBranches!.map(
-        // @ts-ignore type mismatch covers discarded annotation properties
-        (branch) => extractUpdateBranch(branch!),
+      referenceBranch: extractUpdateBranch(
+        MOCK_EXPERIMENT.referenceBranch! as AnnotatedBranch,
+        formData.referenceBranch,
+      ),
+      treatmentBranches: MOCK_EXPERIMENT.treatmentBranches!.map((branch, idx) =>
+        extractUpdateBranch(
+          branch! as AnnotatedBranch,
+          formData.treatmentBranches![idx],
+        ),
       ),
       isRollout: false,
       preventPrefConflicts: false,
       warnFeatureSchema: false,
-    });
+      isLocalized: false,
+      localizations: null,
+    };
+    expect(onSaveArgs[0]).toEqual(expectedData);
     expect(typeof onSaveArgs[1]).toEqual("function");
     expect(typeof onSaveArgs[2]).toEqual("function");
   });
@@ -178,7 +224,7 @@ describe("FormBranches", () => {
                 slug: "",
                 description: "",
                 ratio: 0,
-                featureValue: null,
+                featureValues: [],
                 screenshots: [],
               },
             ],
@@ -196,20 +242,23 @@ describe("FormBranches", () => {
     });
   });
 
-  it("gracefully handles selecting an invalid feature config", async () => {
-    const onSave = jest.fn();
-    render(<SubjectBranches {...{ onSave }} />);
-    selectFeatureConfig(null);
-    await clickAndWaitForSave(onSave);
-    const saveResult = onSave.mock.calls[0][0];
-    expect(saveResult.featureConfigIds).toEqual([]);
-  });
+  it("renders options", async () => {
+    const { container } = render(
+      <SubjectBranches experiment={{ ...MOCK_EXPERIMENT }} />,
+    );
+    const select = screen.getByLabelText("Features");
 
-  it("does not render options when feature is not enabled", async () => {
-    render(<SubjectBranches experiment={{ ...MOCK_EXPERIMENT }} />);
-    const select = screen.getByTestId("feature-config-select");
-    const options = select.querySelectorAll("option");
-    expect(options).toHaveLength(5);
+    let options = container.querySelectorAll(
+      "#react-select-feature-configs-listbox .react-select__option",
+    );
+    expect(options.length).toEqual(0);
+
+    await selectEvent.openMenu(select);
+
+    options = container.querySelectorAll(
+      "#react-select-feature-configs-listbox .react-select__option",
+    );
+    expect(options.length).toEqual(4);
   });
 
   it("requires adding a valid control branch before save is completed", async () => {
@@ -221,7 +270,7 @@ describe("FormBranches", () => {
           experiment: {
             ...MOCK_EXPERIMENT,
             referenceBranch: null,
-            treatmentBranches: null,
+            treatmentBranches: [],
           },
         }}
       />,
@@ -235,7 +284,7 @@ describe("FormBranches", () => {
     });
 
     fireEvent.click(screen.getByTestId("add-branch"));
-    selectFeatureConfig();
+    await selectFeatureConfigs([1]);
     await fillInBranch(container, "referenceBranch");
     expect(screen.getByTestId("save-button")).not.toBeDisabled();
 
@@ -259,7 +308,7 @@ describe("FormBranches", () => {
               slug: "",
               description: "",
               ratio: 1,
-              featureValue: null,
+              featureValues: [],
               screenshots: [],
             },
             treatmentBranches: null,
@@ -333,13 +382,13 @@ describe("FormBranches", () => {
           onSave,
           experiment: {
             ...MOCK_EXPERIMENT,
-            treatmentBranches: null,
+            treatmentBranches: [],
           },
         }}
       />,
     );
 
-    selectFeatureConfig();
+    await selectFeatureConfigs([1]);
     await fillInBranch(container, "referenceBranch");
 
     onSave.mockClear();
@@ -386,7 +435,7 @@ describe("FormBranches", () => {
               slug: "",
               description: "test",
               ratio: 1,
-              featureValue: null,
+              featureValues: [],
               screenshots: [],
             },
             treatmentBranches: null,
@@ -429,7 +478,7 @@ describe("FormBranches", () => {
         }}
       />,
     );
-    selectFeatureConfig(expectedFeatureId);
+    await selectFeatureConfigs([expectedFeatureId!]);
     await clickAndWaitForSave(onSave);
     expect(onSave.mock.calls[0][0].featureConfigIds).toEqual([
       expectedFeatureId,
@@ -452,14 +501,27 @@ describe("FormBranches", () => {
     const branchIdx = 1;
 
     const expectedData = {
-      name: "example name",
       description: "example description",
+      featureValues: [
+        {
+          featureConfig: "1",
+          value: "example value",
+        },
+      ],
+      id: 123,
+      name: "example name",
       ratio: 42,
-      featureValue: "example value",
+      screenshots: [],
     };
+    const inputData = [
+      ["name", expectedData.name],
+      ["description", expectedData.description],
+      ["ratio", expectedData.ratio],
+      ["featureValues[0].value", expectedData.featureValues[0].value],
+    ];
 
     for (const id of ["referenceBranch", `treatmentBranches[${branchIdx}]`]) {
-      await fillInBranch(container, id, expectedData);
+      await fillInBranch(container, id, inputData);
     }
 
     await clickAndWaitForSave(onSave);
@@ -469,20 +531,18 @@ describe("FormBranches", () => {
       MOCK_FEATURE_CONFIG_WITH_SCHEMA.id,
     ]);
     expect(saveResult.referenceBranch).toEqual({
-      id: MOCK_EXPERIMENT.referenceBranch!.id,
-      screenshots: [],
       ...expectedData,
+      id: MOCK_EXPERIMENT.referenceBranch!.id,
     });
     expect(saveResult.treatmentBranches[1]).toEqual({
-      id: MOCK_EXPERIMENT.treatmentBranches![1]!.id,
-      screenshots: [],
       ...expectedData,
+      id: MOCK_EXPERIMENT.treatmentBranches![1]!.id,
     });
   });
 
   it("can display server review-readiness messages", async () => {
     await assertSerializerMessages(SubjectBranches, {
-      feature_config: [SERVER_ERRORS.FEATURE_CONFIG],
+      feature_configs: [SERVER_ERRORS.FEATURE_CONFIGS],
       reference_branch: {
         name: ["Drop a heart", "and break a name"],
         description: [
@@ -499,7 +559,7 @@ describe("FormBranches", () => {
     });
 
     // Feature config review-readiness errors are displayed on branches
-    expect(screen.getAllByText(SERVER_ERRORS.FEATURE_CONFIG)).toHaveLength(1);
+    expect(screen.getAllByText(SERVER_ERRORS.FEATURE_CONFIGS)).toHaveLength(1);
   });
 
   it("doesn't display feature_config review-readiness message on an unsaved branch", async () => {
@@ -520,14 +580,14 @@ describe("FormBranches", () => {
             readyForReview: {
               ready: false,
               message: {
-                feature_config: [SERVER_ERRORS.FEATURE_CONFIG],
+                feature_configs: [SERVER_ERRORS.FEATURE_CONFIGS],
                 reference_branch: {
                   description: [SERVER_ERRORS.BLANK_DESCRIPTION],
                 },
               },
               warnings: {
                 reference_branch: {
-                  feature_value: [FEATURE_VALUE_WARNING],
+                  feature_values: [{ value: [FEATURE_VALUE_WARNING] }],
                 },
               },
             },
@@ -543,7 +603,7 @@ describe("FormBranches", () => {
                 slug: "",
                 description: "",
                 ratio: 0,
-                featureValue: null,
+                featureValues: [],
                 screenshots: [],
               },
             ],
@@ -553,7 +613,9 @@ describe("FormBranches", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText(SERVER_ERRORS.FEATURE_CONFIG)).toHaveLength(1);
+      expect(screen.getAllByText(SERVER_ERRORS.FEATURE_CONFIGS)).toHaveLength(
+        1,
+      );
       expect(screen.getAllByText(FEATURE_VALUE_WARNING)).toHaveLength(1);
     });
   });
@@ -644,7 +706,7 @@ describe("FormBranches", () => {
       expect(checkbox.checked).toEqual(false);
     });
 
-    it("resets when switching away from a feature config that sets prefs", () => {
+    it("resets when switching away from a feature config that sets prefs", async () => {
       render(
         <SubjectBranches
           experiment={{
@@ -662,17 +724,21 @@ describe("FormBranches", () => {
         expect(checkbox).toBeInTheDocument();
         expect(checkbox.checked).toEqual(false);
 
-        fireEvent.click(checkbox);
+        await userEvent.click(checkbox);
         expect(checkbox.checked).toEqual(true);
       }
 
-      selectFeatureConfig(MOCK_FEATURE_CONFIG.id);
+      await selectFeatureConfigs([MOCK_FEATURE_CONFIG.id!], { clear: true });
 
-      expect(
-        screen.queryByTestId("prevent-pref-conflicts-checkbox"),
-      ).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("prevent-pref-conflicts-checkbox"),
+        ).toBeNull();
+      });
 
-      selectFeatureConfig(MOCK_FEATURE_CONFIG_WITH_SETS_PREFS.id);
+      await selectFeatureConfigs([MOCK_FEATURE_CONFIG_WITH_SETS_PREFS.id!], {
+        clear: true,
+      });
 
       {
         const checkbox = screen.getByTestId(
@@ -683,6 +749,155 @@ describe("FormBranches", () => {
         expect(checkbox.checked).toEqual(false);
       }
     });
+  });
+
+  it("renders localization checkbox", async () => {
+    const { experiment } = mockExperimentQuery("boo");
+
+    render(<SubjectBranches {...{ experiment }} />);
+    const checkbox = screen.getByTestId("isLocalized");
+
+    expect(checkbox).toBeInTheDocument();
+  });
+
+  it("renders localized content text field when localization checkbox is checked", async () => {
+    const { experiment } = mockExperimentQuery("boo");
+    render(<SubjectBranches {...{ experiment }} />);
+
+    const checkbox = screen.getByTestId("isLocalized");
+    fireEvent.click(checkbox);
+    const textField = screen.getByTestId("localizations");
+
+    expect(textField).toBeInTheDocument();
+  });
+
+  it("renders localized content from experiment", async () => {
+    const { experiment } = mockExperimentQuery("boo", {
+      isLocalized: true,
+      localizations: "This is localized content",
+    });
+
+    render(<SubjectBranches {...{ experiment }} />);
+    const checkbox = screen.getByTestId("isLocalized") as HTMLInputElement;
+    const textField = screen.getByTestId("localizations");
+
+    expect(checkbox.checked).toEqual(true);
+    expect(textField).toHaveValue(experiment.localizations);
+  });
+
+  it("does not render localized content for non-desktop applications", async () => {
+    const { experiment } = mockExperimentQuery("boo", {
+      application: NimbusExperimentApplicationEnum.IOS,
+    });
+
+    render(<SubjectBranches {...{ experiment }} />);
+
+    expect(screen.queryByTestId("isLocalized")).toBeNull();
+    expect(screen.queryByTestId("localizations")).toBeNull();
+  });
+
+  it("unchecking isLocalized clears localizations form data", async () => {
+    const onSave = jest.fn();
+    const { experiment } = mockExperimentQuery("boo", {
+      isLocalized: true,
+      localizations: "This is localized content",
+    });
+
+    render(<SubjectBranches {...{ experiment, onSave }} />);
+
+    const checkbox = screen.getByTestId("isLocalized") as HTMLInputElement;
+
+    await userEvent.click(checkbox);
+
+    expect(screen.queryByTestId("localizations")).toBeNull();
+
+    await clickAndWaitForSave(onSave);
+
+    expect(onSave.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        isLocalized: false,
+        localizations: null,
+      }),
+    );
+  });
+
+  it("changing localizations field updates on save", async () => {
+    const onSave = jest.fn();
+    const { experiment } = mockExperimentQuery("boo", {
+      isLocalized: true,
+      localizations: "This is localized content",
+    });
+
+    render(<SubjectBranches {...{ experiment, onSave }} />);
+
+    await userEvent.type(
+      screen.getByTestId("localizations"),
+      "{selectall}{backspace}updated localizations",
+    );
+
+    await clickAndWaitForSave(onSave);
+
+    expect(onSave.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        isLocalized: true,
+        localizations: "updated localizations",
+      }),
+    );
+  });
+
+  it("allows multiple values to be selected", async () => {
+    const onSave = jest.fn();
+    const { experiment } = mockExperimentQuery("slug");
+    const { container } = render(
+      <SubjectBranches {...{ experiment, onSave }} />,
+    );
+
+    let selected = container.querySelectorAll(
+      ".react-select__multi-value__label",
+    );
+
+    expect(selected.length).toEqual(1);
+    expect(selected[0].textContent).toEqual(
+      MOCK_CONFIG.allFeatureConfigs![0]!.name,
+    );
+
+    await selectFeatureConfigs([2]);
+
+    selected = container.querySelectorAll(".react-select__multi-value__label");
+    expect(selected.length).toEqual(2);
+    expect(selected[0].textContent).toEqual(
+      MOCK_CONFIG.allFeatureConfigs![0]!.name,
+    );
+    expect(selected[1].textContent).toEqual(
+      MOCK_CONFIG.allFeatureConfigs![1]!.name,
+    );
+
+    await clickAndWaitForSave(onSave);
+
+    const payload = onSave.mock.calls[0][0];
+    expect(payload.featureConfigIds).toEqual([1, 2]);
+    expect(payload.referenceBranch.featureValues).toEqual([
+      {
+        featureConfig: "1",
+        value: '{"environmental-fact": "really-citizen"}',
+      },
+      {
+        featureConfig: "2",
+        value: "",
+      },
+    ]);
+
+    expect(payload.treatmentBranches.length).toEqual(1);
+    expect(payload.treatmentBranches[0].featureValues).toEqual([
+      {
+        featureConfig: "1",
+        value: '{"effect-effect-whole": "close-teach-exactly"}',
+      },
+      {
+        featureConfig: "2",
+        value: "",
+      },
+    ]);
   });
 });
 
@@ -696,14 +911,14 @@ const clickAndWaitForSave = async (pendingOnSave: jest.Mock<any, any>) => {
 async function fillInBranch(
   container: HTMLElement,
   fieldNamePrefix: string,
-  expectedData = {
-    name: "example name",
-    description: "example description",
-    ratio: 42,
-    featureValue: "example value",
-  },
+  expectedData = [
+    ["name", "example name"],
+    ["description", "example description"],
+    ["ratio", 42],
+    ["featureValues[0].value", '{"key": "value"}'],
+  ],
 ) {
-  for (const [name, value] of Object.entries(expectedData)) {
+  for (const [name, value] of expectedData) {
     const field = container.querySelector(
       `[name="${fieldNamePrefix}.${name}"]`,
     ) as HTMLInputElement;
@@ -718,11 +933,27 @@ async function fillInBranch(
   }
 }
 
-function selectFeatureConfig(featureIdx: number | null = 1) {
-  const featureConfigSelects = screen.getByTestId(
-    "feature-config-select",
-  ) as HTMLInputElement;
-  fireEvent.change(featureConfigSelects, {
-    target: { value: featureIdx },
-  });
+async function selectFeatureConfigs(
+  featureConfigIds: number[],
+  { clear = false }: { clear?: boolean } = {},
+) {
+  const featureConfigsSelect = screen.getByLabelText("Features");
+
+  if (clear) {
+    await selectEvent.clearAll(featureConfigsSelect);
+  }
+
+  if (featureConfigIds.length) {
+    await selectEvent.select(featureConfigsSelect, (content, el) => {
+      if (!el) {
+        return false;
+      }
+      const featureConfigId = el.getAttribute("data-feature-config-id");
+      if (!featureConfigId) {
+        return false;
+      }
+
+      return featureConfigIds.includes(parseInt(featureConfigId));
+    });
+  }
 }

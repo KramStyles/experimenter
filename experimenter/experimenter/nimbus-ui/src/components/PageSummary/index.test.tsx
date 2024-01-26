@@ -21,13 +21,18 @@ import {
   updateReviewRequestedBaseProps,
 } from "src/components/PageSummary/mocks";
 import { createMutationMock } from "src/components/Summary/mocks";
-import { CHANGELOG_MESSAGES, SERVER_ERRORS } from "src/lib/constants";
+import {
+  CHANGELOG_MESSAGES,
+  QA_STATUS_PROPERTIES,
+  SERVER_ERRORS,
+} from "src/lib/constants";
 import { mockExperimentQuery, mockLiveRolloutQuery } from "src/lib/mocks";
 import {
   NimbusExperimentApplicationEnum,
   NimbusExperimentChannelEnum,
   NimbusExperimentFirefoxVersionEnum,
   NimbusExperimentPublishStatusEnum,
+  NimbusExperimentQAStatusEnum,
   NimbusExperimentStatusEnum,
 } from "src/types/globalTypes";
 
@@ -704,6 +709,99 @@ describe("PageSummary", () => {
       ).toBeInTheDocument();
     },
   );
+
+  it.each([
+    [
+      NimbusExperimentQAStatusEnum.GREEN,
+      QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.GREEN].description,
+    ],
+    [
+      NimbusExperimentQAStatusEnum.YELLOW,
+      QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.YELLOW].description,
+    ],
+    [
+      NimbusExperimentQAStatusEnum.RED,
+      QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.RED].description,
+    ],
+  ])(
+    "renders qa status pill for each qa status",
+    async (qaStatus: NimbusExperimentQAStatusEnum, qaLabel: string) => {
+      const { mock } = mockExperimentQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        qaStatus: qaStatus,
+        statusNext: null,
+      });
+
+      render(<Subject mocks={[mock]} />);
+      const qaStatusPill = await screen.findByTestId("pill-qa-status");
+      expect(qaStatusPill).toBeInTheDocument();
+      expect(qaStatusPill).toHaveTextContent(qaLabel);
+    },
+  );
+
+  it("does not render qa status pill when QA status is not set", async () => {
+    const { mock } = mockExperimentQuery("demo-slug", {
+      status: NimbusExperimentStatusEnum.LIVE,
+      publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+      qaStatus: NimbusExperimentQAStatusEnum.NOT_SET,
+      statusNext: null,
+    });
+
+    render(<Subject mocks={[mock]} />);
+    expect(screen.queryByTestId("pill-qa-status")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [NimbusExperimentStatusEnum.DRAFT],
+    [NimbusExperimentStatusEnum.LIVE],
+    [NimbusExperimentStatusEnum.PREVIEW],
+    [NimbusExperimentStatusEnum.COMPLETE],
+  ])(
+    "renders qa status pill for each status",
+    async (experimentStatus: NimbusExperimentStatusEnum) => {
+      const { mock } = mockExperimentQuery("demo-slug", {
+        status: experimentStatus,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        qaStatus: NimbusExperimentQAStatusEnum.GREEN,
+        statusNext: null,
+      });
+
+      render(<Subject mocks={[mock]} />);
+      const qaStatusPill = await screen.findByTestId("pill-qa-status");
+      expect(qaStatusPill).toBeInTheDocument();
+      expect(qaStatusPill).toHaveTextContent(
+        QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.GREEN].description,
+      );
+    },
+  );
+
+  it("renders qa status pill when archived", async () => {
+    const { mock } = mockExperimentQuery("demo-slug", {
+      status: NimbusExperimentStatusEnum.COMPLETE,
+      publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+      qaStatus: NimbusExperimentQAStatusEnum.GREEN,
+      statusNext: null,
+      isArchived: true,
+    });
+
+    render(<Subject mocks={[mock]} />);
+    const qaStatusPill = await screen.findByTestId("pill-qa-status");
+    expect(qaStatusPill).toBeInTheDocument();
+    expect(qaStatusPill).toHaveTextContent(
+      QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.GREEN].description,
+    );
+  });
+
+  it("will not render qa status pill when status is not set", async () => {
+    const { mock, experiment } = mockExperimentQuery("demo-slug", {
+      status: NimbusExperimentStatusEnum.LIVE,
+      publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+      statusNext: null,
+    });
+    render(<Subject mocks={[mock]} />);
+    expect(screen.queryByTestId("pill-qa-status")).not.toBeInTheDocument();
+  });
 
   it.each([
     [

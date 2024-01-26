@@ -1,11 +1,14 @@
 import copy
 import datetime
 import os.path
+from collections import defaultdict
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from urllib.parse import urljoin
 from uuid import uuid4
 
+import packaging
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.models import User
@@ -14,7 +17,7 @@ from django.core.files.base import ContentFile
 from django.core.serializers.json import DjangoJSONEncoder
 from django.core.validators import MaxValueValidator
 from django.db import models
-from django.db.models import F, Q
+from django.db.models import F, Q, QuerySet
 from django.db.models.constraints import UniqueConstraint
 from django.urls import reverse
 from django.utils import timezone
@@ -22,7 +25,7 @@ from django.utils.text import slugify
 
 from experimenter.base import UploadsStorage
 from experimenter.base.models import Country, Language, Locale
-from experimenter.experiments.constants import NimbusConstants
+from experimenter.experiments.constants import ChangeEventType, NimbusConstants
 from experimenter.projects.models import Project
 from experimenter.targeting.constants import TargetingConstants
 
@@ -57,7 +60,9 @@ class NimbusExperimentManager(models.Manager["NimbusExperiment"]):
     def with_owner_features(self):
         return (
             self.get_queryset()
-            .prefetch_related("owner", "feature_configs", "projects")
+            .prefetch_related(
+                "owner", "feature_configs", "feature_configs__schemas", "projects"
+            )
             .order_by("-_updated_date_time")
         )
 
@@ -101,18 +106,47 @@ class NimbusExperimentManager(models.Manager["NimbusExperiment"]):
         )
 
 
+class NimbusExperimentBranchThrough(models.Model):
+    parent_experiment = models.ForeignKey(
+        "NimbusExperiment",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_parent",
+    )
+    child_experiment = models.ForeignKey(
+        "NimbusExperiment",
+        on_delete=models.CASCADE,
+        related_name="%(class)s_child",
+    )
+    branch_slug = models.SlugField(
+        max_length=NimbusConstants.MAX_SLUG_LEN, null=True, blank=True
+    )
+
+    class Meta:
+        abstract = True
+        unique_together = ("parent_experiment", "child_experiment", "branch_slug")
+
+
+class NimbusExperimentBranchThroughRequired(NimbusExperimentBranchThrough):
+    pass
+
+
+class NimbusExperimentBranchThroughExcluded(NimbusExperimentBranchThrough):
+    pass
+
+
 class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.Model):
     parent = models.ForeignKey["NimbusExperiment"](
         "experiments.NimbusExperiment", models.SET_NULL, blank=True, null=True
     )
-    is_rollout = models.BooleanField(default=False)
-    is_archived = models.BooleanField(default=False)
+    is_rollout = models.BooleanField("Is Experiment a Rollout Flag", default=False)
+    is_archived = models.BooleanField("Is Experiment Archived Flag", default=False)
     owner = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="owned_nimbusexperiments",
     )
     status = models.CharField(
+        "Status",
         max_length=255,
         default=NimbusConstants.Status.DRAFT,
         choices=NimbusConstants.Status.choices,
@@ -124,94 +158,181 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
         choices=NimbusConstants.Status.choices,
     )
     publish_status = models.CharField(
+        "Publish Status",
         max_length=255,
         default=NimbusConstants.PublishStatus.IDLE,
         choices=NimbusConstants.PublishStatus.choices,
     )
     name = models.CharField(max_length=255, unique=True)
     slug = models.SlugField(max_length=NimbusConstants.MAX_SLUG_LEN, unique=True)
-    public_description = models.TextField(default="")
-    risk_mitigation_link = models.URLField(max_length=255, blank=True)
-    is_paused = models.BooleanField(default=False)
-    is_rollout_dirty = models.BooleanField(blank=False, null=False, default=False)
+    public_description = models.TextField("Description", default="")
+    risk_mitigation_link = models.URLField(
+        "Risk Mitigation Link", max_length=255, blank=True
+    )
+    is_paused = models.BooleanField("Is Enrollment Paused Flag", default=False)
+    is_rollout_dirty = models.BooleanField(
+        "Approved Changes Flag", blank=False, null=False, default=False
+    )
     proposed_duration = models.PositiveIntegerField(
+        "Proposed Duration",
         default=NimbusConstants.DEFAULT_PROPOSED_DURATION,
         validators=[MaxValueValidator(NimbusConstants.MAX_DURATION)],
     )
     proposed_enrollment = models.PositiveIntegerField(
+        "Proposed Enrollment Duration",
         default=NimbusConstants.DEFAULT_PROPOSED_ENROLLMENT,
         validators=[MaxValueValidator(NimbusConstants.MAX_DURATION)],
     )
     population_percent = models.DecimalField[Decimal](
-        max_digits=7, decimal_places=4, default=0.0
+        "Population Percent", max_digits=7, decimal_places=4, default=0.0
     )
-    total_enrolled_clients = models.PositiveIntegerField(default=0)
+    total_enrolled_clients = models.PositiveIntegerField(
+        "Expected Number of Clients", default=0
+    )
     firefox_min_version = models.CharField(
+        "Minimum Firefox Version",
         max_length=255,
         default=NimbusConstants.Version.NO_VERSION,
         blank=True,
     )
     firefox_max_version = models.CharField(
+        "Maximum Firefox Version",
         max_length=255,
         default=NimbusConstants.Version.NO_VERSION,
         blank=True,
     )
     application = models.CharField(
+        "Application Type",
         max_length=255,
         choices=NimbusConstants.Application.choices,
     )
     channel = models.CharField(
+        "Channel Type",
         max_length=255,
         choices=NimbusConstants.Channel.choices,
     )
-    locales = models.ManyToManyField[Locale](Locale, blank=True)
-    countries = models.ManyToManyField[Country](Country, blank=True)
-    languages = models.ManyToManyField[Language](Language, blank=True)
-    is_sticky = models.BooleanField(default=False)
-    projects = models.ManyToManyField[Project](Project, blank=True)
-    hypothesis = models.TextField(default=NimbusConstants.HYPOTHESIS_DEFAULT)
-    primary_outcomes = ArrayField(models.CharField(max_length=255), default=list)
-    secondary_outcomes = ArrayField(models.CharField(max_length=255), default=list)
-    feature_configs = models.ManyToManyField["NimbusFeatureConfig"](
-        "NimbusFeatureConfig",
-        blank=True,
+    locales = models.ManyToManyField[Locale](
+        Locale, blank=True, verbose_name="Supported Locales"
     )
-    warn_feature_schema = models.BooleanField(default=False)
+    countries = models.ManyToManyField[Country](
+        Country, blank=True, verbose_name="Supported Countries"
+    )
+    languages = models.ManyToManyField[Language](
+        Language, blank=True, verbose_name="Supported Languages"
+    )
+    is_sticky = models.BooleanField("Sticky Enrollment Flag", default=False)
+    projects = models.ManyToManyField[Project](
+        Project, blank=True, verbose_name="Supported Projects"
+    )
+    hypothesis = models.TextField(
+        "Hypothesis", default=NimbusConstants.HYPOTHESIS_DEFAULT
+    )
+    primary_outcomes = ArrayField(
+        models.CharField(max_length=255),
+        default=list,
+        verbose_name="Primary Outcomes",
+    )
+    secondary_outcomes = ArrayField(
+        models.CharField(max_length=255),
+        default=list,
+        verbose_name="Secondary Outcomes",
+    )
+    feature_configs = models.ManyToManyField["NimbusFeatureConfig"](
+        "NimbusFeatureConfig", blank=True, verbose_name="Feature configurations"
+    )
+    warn_feature_schema = models.BooleanField("Feature Schema Warning", default=False)
     targeting_config_slug = models.CharField(
+        "Targeting Configuration Slug",
         max_length=255,
         default=TargetingConstants.TargetingConfig.NO_TARGETING,
     )
     reference_branch = models.OneToOneField["NimbusBranch"](
-        "NimbusBranch", blank=True, null=True, on_delete=models.SET_NULL
+        "NimbusBranch",
+        blank=True,
+        null=True,
+        on_delete=models.SET_NULL,
+        verbose_name="Reference Branch",
     )
     published_dto = models.JSONField[Dict[str, Any]](
-        encoder=DjangoJSONEncoder, blank=True, null=True
+        "Published DTO", encoder=DjangoJSONEncoder, blank=True, null=True
     )
     results_data = models.JSONField[Dict[str, Any]](
-        encoder=DjangoJSONEncoder, blank=True, null=True
+        "Results Data", encoder=DjangoJSONEncoder, blank=True, null=True
     )
-    risk_partner_related = models.BooleanField(default=None, blank=True, null=True)
-    risk_revenue = models.BooleanField(default=None, blank=True, null=True)
-    risk_brand = models.BooleanField(default=None, blank=True, null=True)
+    risk_partner_related = models.BooleanField(
+        "Is a Partner Related Risk Flag", default=None, blank=True, null=True
+    )
+    risk_revenue = models.BooleanField(
+        "Is a Revenue Risk Flag", default=None, blank=True, null=True
+    )
+    risk_brand = models.BooleanField(
+        "Is a Brand Risk Flag", default=None, blank=True, null=True
+    )
     conclusion_recommendation = models.CharField(
+        "Recommended Conclusion",
         max_length=255,
         blank=True,
         null=True,
     )
-    takeaways_summary = models.TextField(blank=True, null=True)
+    takeaways_metric_gain = models.BooleanField(
+        "Takeaways Metric Gain Flag", default=False, blank=False, null=False
+    )
+    takeaways_gain_amount = models.TextField(
+        "Takeaways Gain Amount", blank=True, null=True
+    )
+    takeaways_qbr_learning = models.BooleanField(
+        "Takeaways QBR Learning", default=False, blank=False, null=False
+    )
+    takeaways_summary = models.TextField("Takeaways Summary", blank=True, null=True)
     _updated_date_time = models.DateTimeField(auto_now=True)
-    is_first_run = models.BooleanField(default=False)
-    is_client_schema_disabled = models.BooleanField(default=False)
+    is_first_run = models.BooleanField("Is First Run Flag", default=False)
+    is_client_schema_disabled = models.BooleanField(
+        "Is Client Schema Disabled Flag", default=False
+    )
 
-    _start_date = models.DateField(blank=True, null=True)
-    _enrollment_end_date = models.DateField(blank=True, null=True)
-    _end_date = models.DateField(blank=True, null=True)
-    prevent_pref_conflicts = models.BooleanField(blank=True, null=True, default=False)
-    proposed_release_date = models.DateField(blank=True, null=True)
+    _start_date = models.DateField("Start Date", blank=True, null=True)
+    _enrollment_end_date = models.DateField("Enrollment End Date", blank=True, null=True)
+    _end_date = models.DateField("End Date", blank=True, null=True)
+    prevent_pref_conflicts = models.BooleanField(
+        "Prevent Preference Conflicts Flag", blank=True, null=True, default=False
+    )
+    proposed_release_date = models.DateField(
+        "Expected Release Date", blank=True, null=True
+    )
 
-    is_localized = models.BooleanField(default=False)
-    localizations = models.TextField(blank=True, null=True)
+    is_localized = models.BooleanField("Is Localized Flag", default=False)
+    localizations = models.TextField("Localizations", blank=True, null=True)
+    published_date = models.DateTimeField("Date First Published", blank=True, null=True)
 
+    required_experiments = models.ManyToManyField["NimbusExperiment"](
+        "NimbusExperiment",
+        related_name="required_by",
+        blank=True,
+        verbose_name="Required Experiments",
+        through=NimbusExperimentBranchThroughRequired,
+        through_fields=("parent_experiment", "child_experiment"),
+    )
+    excluded_experiments = models.ManyToManyField["NimbusExperiment"](
+        "NimbusExperiment",
+        related_name="excluded_by",
+        blank=True,
+        verbose_name="Excluded Experiments",
+        through=NimbusExperimentBranchThroughExcluded,
+        through_fields=("parent_experiment", "child_experiment"),
+    )
+    qa_status = models.CharField(
+        "QA Status",
+        max_length=255,
+        default=NimbusConstants.QAStatus.NOT_SET,
+        choices=NimbusConstants.QAStatus.choices,
+    )
+    qa_comment = models.TextField("QA Comment", blank=True, null=True)
+    subscribers = models.ManyToManyField(
+        User,
+        related_name="subscribed_nimbusexperiments",
+        blank=True,
+        verbose_name="Subscribers",
+    )
     objects = NimbusExperimentManager()
 
     class Meta:
@@ -275,9 +396,7 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
 
     @property
     def experiment_url(self):
-        return urljoin(
-            "https://{host}".format(host=settings.HOSTNAME), self.get_absolute_url()
-        )
+        return urljoin(f"https://{settings.HOSTNAME}", self.get_absolute_url())
 
     def _get_targeting_min_version(self):
         expressions = []
@@ -330,7 +449,7 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
 
         if self.prevent_pref_conflicts:
             for config in self.feature_configs.all():
-                prefs.extend(config.sets_prefs)
+                prefs.extend(config.schemas.get(version=None).sets_prefs)
 
         return prefs
 
@@ -370,6 +489,38 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
                 country.code for country in sorted(countries, key=lambda c: c.code)
             ]
             sticky_expressions.append(f"region in {countries}")
+
+        enrollments_map_key = "enrollments_map"
+        if is_desktop:
+            enrollments_map_key = "enrollmentsMap"
+
+        if excluded_experiments := NimbusExperimentBranchThroughExcluded.objects.filter(
+            parent_experiment=self
+        ).order_by("id"):
+            for excluded in excluded_experiments:
+                if excluded.branch_slug:
+                    sticky_expressions.append(
+                        f"({enrollments_map_key}['{excluded.child_experiment.slug}'] "
+                        f"== '{excluded.branch_slug}') == false"
+                    )
+                else:
+                    sticky_expressions.append(
+                        f"('{excluded.child_experiment.slug}' in enrollments) == false"
+                    )
+
+        if required_experiments := NimbusExperimentBranchThroughRequired.objects.filter(
+            parent_experiment=self
+        ).order_by("id"):
+            for required in required_experiments:
+                if required.branch_slug:
+                    sticky_expressions.append(
+                        f"{enrollments_map_key}['{required.child_experiment.slug}'] "
+                        f"== '{required.branch_slug}'"
+                    )
+                else:
+                    sticky_expressions.append(
+                        f"'{required.child_experiment.slug}' in enrollments"
+                    )
 
         if self.is_sticky and sticky_expressions:
             expressions.append(
@@ -440,9 +591,18 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
                 return self._start_date
 
     @property
+    def release_date(self):
+        if self.is_first_run:
+            return self.proposed_release_date
+
+    @property
+    def enrollment_start_date(self):
+        return self.release_date or self.start_date
+
+    @property
     def launch_month(self):
-        if self.start_date:
-            return self.start_date.strftime("%B")
+        if self.enrollment_start_date is not None:
+            return self.enrollment_start_date.strftime("%B")
 
     @property
     def end_date(self):
@@ -462,18 +622,26 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
 
     @property
     def proposed_enrollment_end_date(self):
-        if self.start_date and self.proposed_enrollment is not None:
-            return self.start_date + datetime.timedelta(days=self.proposed_enrollment)
+        if (
+            self.proposed_enrollment is not None
+            and self.enrollment_start_date is not None
+        ):
+            return self.enrollment_start_date + datetime.timedelta(
+                days=self.proposed_enrollment
+            )
 
     @property
     def proposed_end_date(self):
-        if self.start_date and self.proposed_duration is not None:
-            return self.start_date + datetime.timedelta(days=self.proposed_duration)
+        if self.proposed_duration is not None and self.enrollment_start_date is not None:
+            return self.enrollment_start_date + datetime.timedelta(
+                days=self.proposed_duration
+            )
 
     @property
     def computed_enrollment_days(self):
-        if None not in (self._start_date, self._enrollment_end_date):
-            return (self._enrollment_end_date - self._start_date).days
+        enrollment_start = self.enrollment_start_date
+        if self._enrollment_end_date is not None and enrollment_start is not None:
+            return (self._enrollment_end_date - enrollment_start).days
 
         if self.is_paused:
             if paused_changelogs := [
@@ -491,7 +659,7 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
                 paused_change = sorted(paused_changelogs, key=lambda c: c.changed_on)[-1]
                 self._enrollment_end_date = paused_change.changed_on.date()
                 self.save()
-                return (paused_change.changed_on.date() - self.start_date).days
+                return (paused_change.changed_on.date() - enrollment_start).days
 
         if self.end_date:
             return self.computed_duration_days
@@ -500,12 +668,17 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
 
     @property
     def computed_enrollment_end_date(self):
-        start_date = self.start_date
+        if (
+            self.computed_enrollment_days is not None
+            and self.enrollment_start_date is not None
+        ):
+            return self.enrollment_start_date + datetime.timedelta(
+                days=self.computed_enrollment_days
+            )
 
-        if start_date is not None:
-            computed_enrollment_days = self.computed_enrollment_days
-            if computed_enrollment_days is not None:
-                return start_date + datetime.timedelta(days=computed_enrollment_days)
+    @property
+    def actual_enrollment_end_date(self):
+        return self._enrollment_end_date or None
 
     @property
     def computed_end_date(self):
@@ -513,21 +686,19 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
 
     @property
     def enrollment_duration(self):
-        if self.start_date and self.computed_end_date:
+        if self.computed_end_date and self.enrollment_start_date is not None:
             return (
-                self.start_date.strftime("%Y-%m-%d")
+                self.enrollment_start_date.strftime("%Y-%m-%d")
                 + " to "
                 + self.computed_end_date.strftime("%Y-%m-%d")
             )
-        else:
-            return self.proposed_duration
+        return self.proposed_duration
 
     @property
     def computed_duration_days(self):
-        if self.start_date and self.computed_end_date:
-            return (self.computed_end_date - self.start_date).days
-        else:
-            return self.proposed_duration
+        if self.computed_end_date and self.enrollment_start_date is not None:
+            return (self.computed_end_date - self.enrollment_start_date).days
+        return self.proposed_duration
 
     @property
     def should_end(self):
@@ -552,7 +723,6 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
         start_date = (self.start_date or datetime.date.today()) - datetime.timedelta(
             days=1
         )
-
         if self.end_date:
             end_date = self.end_date + datetime.timedelta(days=2)
         else:
@@ -727,7 +897,7 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
         ) >= datetime.timedelta(seconds=settings.KINTO_REVIEW_TIMEOUT)
         return self.publish_status == self.PublishStatus.WAITING and review_expired
 
-    def clone(self, name, user, rollout_branch_slug=None):
+    def clone(self, name, user, rollout_branch_slug=None, changed_on=None):
         # Inline import to prevent circular import
         from experimenter.experiments.changelog_utils import generate_nimbus_changelog
 
@@ -745,13 +915,19 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
         cloned.is_paused = False
         cloned.is_rollout_dirty = False
         cloned.reference_branch = None
+        cloned.proposed_release_date = None
         cloned.published_dto = None
         cloned.results_data = None
         cloned.takeaways_summary = None
         cloned.conclusion_recommendation = None
+        cloned.takeaways_metric_gain = False
+        cloned.takeaways_gain_amount = None
+        cloned.takeaways_qbr_learning = False
         cloned._start_date = None
         cloned._end_date = None
         cloned._enrollment_end_date = None
+        cloned.qa_status = NimbusExperiment.QAStatus.NOT_SET
+        cloned.qa_comment = None
         cloned.save()
 
         if rollout_branch_slug:
@@ -778,23 +954,94 @@ class NimbusExperiment(NimbusConstants, TargetingConstants, FilterMixin, models.
             link.experiment = cloned
             link.save()
 
+        cloned.required_experiments.add(*self.required_experiments.all())
+        cloned.excluded_experiments.add(*self.excluded_experiments.all())
+
         cloned.feature_configs.add(*self.feature_configs.all())
         cloned.countries.add(*self.countries.all())
         if self.application == self.Application.DESKTOP:
             cloned.locales.add(*self.locales.all())
         cloned.languages.add(*self.languages.all())
         cloned.projects.add(*self.projects.all())
+        cloned.subscribers.remove(*self.subscribers.all())
 
         if rollout_branch_slug:
             generate_nimbus_changelog(
                 cloned,
                 user,
                 f"Cloned from {self} with rollout branch {rollout_branch_slug}",
+                changed_on,
             )
         else:
-            generate_nimbus_changelog(cloned, user, f"Cloned from {self}")
+            generate_nimbus_changelog(cloned, user, f"Cloned from {self}", changed_on)
 
         return cloned
+
+    def get_changelogs_by_date(self):
+        # Inline import to prevent circular import
+        from experimenter.experiments.changelog_utils import get_formatted_change_object
+
+        changes_by_date = defaultdict(list)
+        date_option = "%I:%M %p %Z"
+        date_option = "%I:%M %p %Z"
+        changelogs = list(
+            self.changes.order_by("-changed_on").prefetch_related("changed_by")
+        )
+
+        for index, changelog in enumerate(changelogs[:-1]):
+            current_data = changelog.experiment_data
+            previous_data = changelogs[index + 1].experiment_data
+            local_timestamp = timezone.localtime(changelog.changed_on)
+            timestamp = local_timestamp.strftime(date_option)
+            local_timestamp = timezone.localtime(changelog.changed_on)
+            timestamp = local_timestamp.strftime(date_option)
+
+            diff_fields = {
+                field: {
+                    "old_value": previous_data.get(field),
+                    "new_value": current_data.get(field),
+                }
+                for field in current_data
+                if (
+                    field != "_updated_date_time"
+                    and field != "published_dto"
+                    and field != "status_next"
+                    and current_data[field] != previous_data.get(field)
+                )
+            }
+
+            for field, field_diff in diff_fields.items():
+                change = get_formatted_change_object(
+                    field, field_diff, changelog, timestamp
+                )
+
+                changes_by_date[changelog.changed_on.date()].append(change)
+
+        if changelogs:
+            creation_log = changelogs[-1]
+            first_local_timestamp = timezone.localtime(creation_log.changed_on)
+            first_timestamp = first_local_timestamp.strftime(date_option)
+            if self.parent:
+                message = (
+                    f"{creation_log.changed_by} "
+                    f"cloned this experiment from {self.parent.name}"
+                )
+            else:
+                message = f"{creation_log.changed_by} created this experiment"
+            change = {
+                "event": ChangeEventType.CREATION.name,
+                "event_message": message,
+                "changed_by": creation_log.changed_by,
+                "timestamp": first_timestamp,
+            }
+            changes_by_date[creation_log.changed_on.date()].append(change)
+
+        transformed_changelogs = [
+            {"date": date, "changes": changes}
+            for date, changes in changes_by_date.items()
+        ]
+
+        return transformed_changelogs
 
 
 class NimbusBranch(models.Model):
@@ -847,7 +1094,7 @@ class NimbusBranchFeatureValue(models.Model):
         NimbusBranch, related_name="feature_values", on_delete=models.CASCADE
     )
     feature_config = models.ForeignKey["NimbusFeatureConfig"](
-        "NimbusFeatureConfig", blank=True, null=True, on_delete=models.CASCADE
+        "NimbusFeatureConfig", on_delete=models.CASCADE
     )
     value = models.TextField(blank=True, default="")
 
@@ -885,6 +1132,9 @@ class NimbusBranchScreenshot(models.Model):
 
     class Meta:
         ordering = ["id"]
+
+    def __str__(self):  # pragma: no cover
+        return f"{self.branch}: {self.description}"
 
     def delete(self, *args, **kwargs):
         old_image_name = self.image.name if self.image and self.image.name else None
@@ -948,7 +1198,7 @@ class NimbusIsolationGroup(models.Model):
     application = models.CharField(
         max_length=255, choices=NimbusExperiment.Application.choices
     )
-    name = models.CharField(max_length=255)
+    name = models.CharField(max_length=2048)
     instance = models.PositiveIntegerField(default=1)
     total = models.PositiveIntegerField(default=NimbusConstants.BUCKET_TOTAL)
 
@@ -1045,10 +1295,120 @@ class NimbusFeatureConfig(models.Model):
         null=True,
     )
     owner_email = models.EmailField(blank=True, null=True)
-    schema = models.TextField(blank=True, null=True)
-    read_only = models.BooleanField(default=False)
-    sets_prefs = ArrayField(models.CharField(max_length=255, null=False), default=list)
     enabled = models.BooleanField(default=True)
+
+    def schemas_between_versions(
+        self,
+        min_version: packaging.version,
+        max_version: Optional[packaging.version],
+    ) -> QuerySet["NimbusVersionedSchema"]:
+        return (
+            self.schemas.filter(
+                NimbusFeatureVersion.objects.between_versions_q(
+                    min_version, max_version, prefix="version"
+                )
+            )
+            .order_by("-version__major", "-version__minor", "-version__patch")
+            .select_related("version")
+        )
+
+    @dataclass
+    class VersionedSchemaRange:
+        # The versioned schemas in the requested range, or a single element list
+        # with an unversioned schema.
+        schemas: list["NimbusVersionedSchema"]
+
+        # If true, then this feature is unsupported in the entire version range.
+        unsupported_in_range: bool
+
+        # Any versions in the requested range that do not support the schema.
+        unsupported_versions: list["NimbusFeatureVersion"]
+
+    def get_versioned_schema_range(
+        self,
+        min_version: packaging.version,
+        max_version: Optional[packaging.version],
+    ) -> VersionedSchemaRange:
+        unsupported_versions: list[NimbusFeatureVersion] = []
+
+        assume_unversioned = False
+        if min_supported_version := NimbusConstants.MIN_VERSIONED_FEATURE_VERSION.get(
+            self.application
+        ):
+            min_supported_version = NimbusExperiment.Version.parse(min_supported_version)
+
+            if min_supported_version > min_version:
+                if max_version is not None and min_supported_version >= max_version:
+                    # We will not have any NimbusVerionedSchemas in this
+                    # version range. The best we can do is use the
+                    # unversioned schema.
+                    #
+                    # TODO(#9869): warn the user that we don't have information
+                    # about this interval.
+                    assume_unversioned = True
+                elif max_version is None or min_supported_version < max_version:
+                    # If you're targeting a minimum version before we have
+                    # versioned manifests without an upper bound, we'll use the
+                    # min_supported_version as the minimum version for determing
+                    # what NimbusVersionedSchemas to use.
+                    #
+                    # Using the unversioned schema in this case makes less
+                    # sense, because we have *some* version information.
+                    #
+                    # TODO(#9869): warn the user that we don't have information
+                    # about this interval.
+                    min_version = min_supported_version
+        else:
+            # This application does not support versioned feature configurations.
+            assume_unversioned = True
+
+        if assume_unversioned:
+            schemas = [self.schemas.get(version=None)]
+        else:
+            schemas = list(self.schemas_between_versions(min_version, max_version))
+
+            if schemas:
+                # Find all NimbusFeatureVersion objects between the min and max
+                # version that are supported by *any* feature in the
+                # application.
+                #
+                # If there is a version in this queryse that isn't present in
+                # `schemas`, then we know that the feature is not supported in
+                # that version.
+                supported_versions = (
+                    NimbusFeatureVersion.objects.filter(
+                        NimbusFeatureVersion.objects.between_versions_q(
+                            min_version, max_version
+                        ),
+                        schemas__feature_config__application=self.application,
+                    )
+                    .order_by("-major", "-minor", "-patch")
+                    .distinct()
+                )
+
+                schemas_by_version = {schema.version: schema for schema in schemas}
+
+                for application_version in supported_versions:
+                    if application_version not in schemas_by_version:
+                        unsupported_versions.append(application_version)
+            elif self.schemas.filter(version__isnull=False).exists():
+                # There are versioned schemas outside this range. This feature
+                # is unsupported in this range.
+                return NimbusFeatureConfig.VersionedSchemaRange(
+                    schemas=[],
+                    unsupported_in_range=True,
+                    unsupported_versions=[],
+                )
+            else:
+                # There are no verioned schemas for this feature. Fall back to
+                # using unversioned schema.
+                schemas = [self.schemas.get(version=None)]
+
+        return NimbusFeatureConfig.VersionedSchemaRange(
+            schemas=schemas,
+            unsupported_in_range=False,
+            unsupported_versions=unsupported_versions,
+        )
 
     class Meta:
         verbose_name = "Nimbus Feature Config"
@@ -1057,6 +1417,110 @@ class NimbusFeatureConfig(models.Model):
 
     def __str__(self):  # pragma: no cover
         return self.name
+
+
+class NimbusFeatureVersionManager(models.Manager["NimbusFeatureVersion"]):
+    def between_versions_q(
+        self,
+        min_version: packaging.version.Version,
+        max_version: Optional[packaging.version.Version],
+        *,
+        prefix: Optional[str] = None,
+    ) -> Q:
+        if prefix is not None:
+
+            def prefixed(**kwargs: dict[str, Any]):
+                return {f"{prefix}__{k}": v for k, v in kwargs.items()}
+
+        else:
+
+            def prefixed(**kwargs: dict[str, Any]):
+                return kwargs
+
+        # (a, b, c) >= (d, e, f)
+        # := (a > b) | (a = b & d > e) | (a = b & d = e & c >= f)
+        # == (a > b) | (a = b & (d > e | (d = e & c >= f)))
+
+        # packaging.version.Version uses major.minor.micro, but
+        # NimbusFeatureVersion uses major.minor.patch (semver).
+        q = Q(**prefixed(major__gt=min_version.major)) | Q(
+            **prefixed(major=min_version.major)
+        ) & (
+            Q(**prefixed(minor__gt=min_version.minor))
+            | Q(**prefixed(minor=min_version.minor, patch__gte=min_version.micro))
+        )
+
+        if max_version is not None:
+            # (a, b, c) < (d, e, f)
+            # := (a < d) | (a == d & b < e) | (a == d & b == e & c < f)
+            # == (a < d) | (a == d & (b < e | (b == e & c < f)))
+            q &= Q(**prefixed(major__lt=max_version.major)) | Q(
+                **prefixed(major=max_version.major)
+            ) & (
+                Q(**prefixed(minor__lt=max_version.minor))
+                | Q(**prefixed(minor=max_version.minor, patch__lt=max_version.micro))
+            )
+
+        return q
+
+
+class NimbusFeatureVersion(models.Model):
+    major = models.IntegerField(null=False)
+    minor = models.IntegerField(null=False)
+    patch = models.IntegerField(null=False)
+
+    objects = NimbusFeatureVersionManager()
+
+    class Meta:
+        verbose_name = "Nimbus Feature Version"
+        verbose_name_plural = "Nimbus Feature Versions"
+        unique_together = ("major", "minor", "patch")
+
+    def __repr__(self):  # pragma: no cover
+        return f"<NimbusFeatureVersion({self.major}, {self.minor}, {self.patch})>"
+
+    def __str__(self):  # pragma: no cover
+        return f"{self.major}.{self.minor}.{self.patch}"
+
+
+class NimbusVersionedSchema(models.Model):
+    feature_config = models.ForeignKey(
+        NimbusFeatureConfig,
+        related_name="schemas",
+        on_delete=models.CASCADE,
+    )
+    version = models.ForeignKey(
+        NimbusFeatureVersion,
+        related_name="schemas",
+        on_delete=models.CASCADE,
+        null=True,
+    )
+    schema = models.TextField(blank=True, null=True)
+
+    # Desktop-only
+    sets_prefs = ArrayField(models.CharField(max_length=255, null=False, default=list))
+    is_early_startup = models.BooleanField(null=False, default=False)
+
+    class Meta:
+        verbose_name = "Nimbus Versioned Schema"
+        verbose_name_plural = "Nimbus Versioned Schemas"
+        unique_together = ("feature_config", "version")
+
+    def __repr__(self):  # pragma: no cover
+        return (
+            f"<NimbusVersionedSchema(feature_config_id={self.feature_config_id}, "
+            f"version={self.version})>"
+        )
+
+    def __str__(self):  # pragma: no cover
+        as_str = f"{self.feature_config}"
+
+        if self.version is not None:
+            as_str += f" (version {self.version})"
+        else:
+            as_str += " (unversioned)"
+
+        return as_str
 
 
 class NimbusChangeLogManager(models.Manager["NimbusChangeLog"]):

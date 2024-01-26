@@ -10,7 +10,11 @@ import { BranchInput, ExperimentInput } from "src/types/globalTypes";
 
 export type FormBranchesState = Pick<
   ExperimentInput,
-  "featureConfigIds" | "warnFeatureSchema" | "isRollout"
+  | "featureConfigIds"
+  | "warnFeatureSchema"
+  | "isRollout"
+  | "isLocalized"
+  | "localizations"
 > & {
   referenceBranch: null | AnnotatedBranch;
   treatmentBranches: null | AnnotatedBranch[];
@@ -37,6 +41,8 @@ export function createInitialState({
   isRollout,
   referenceBranch,
   treatmentBranches,
+  isLocalized,
+  localizations,
 }: getExperiment_experimentBySlug): FormBranchesState {
   let lastId = 0;
 
@@ -67,6 +73,8 @@ export function createInitialState({
     referenceBranch: annotatedReferenceBranch,
     treatmentBranches: annotatedTreatmentBranches,
     preventPrefConflicts: preventPrefConflicts ?? false,
+    isLocalized,
+    localizations,
   };
 }
 
@@ -81,12 +89,17 @@ export function annotateExperimentBranch(
     isDirty: false,
     errors: {},
     reviewMessages: {},
+    featureValues: branch.featureValues?.map((fv) => ({
+      featureConfig: fv?.featureConfig?.id?.toString(),
+      value: fv?.value,
+    })),
   };
 }
 
 export function createAnnotatedBranch(
   lastId: number,
   name: string,
+  featureConfigIds: FormBranchesState["featureConfigIds"],
 ): AnnotatedBranch {
   return {
     key: `branch-${lastId}`,
@@ -96,6 +109,9 @@ export function createAnnotatedBranch(
     name,
     description: "",
     ratio: 1,
-    featureValue: null,
+    featureValues: featureConfigIds?.map((featureConfigId) => ({
+      featureConfig: featureConfigId?.toString(),
+      value: "",
+    })),
   };
 }

@@ -6,7 +6,7 @@ import { useQuery } from "@apollo/client";
 import React, { useMemo } from "react";
 import Nav from "react-bootstrap/Nav";
 import Navbar from "react-bootstrap/Navbar";
-import Select, { OptionsType, OptionTypeBase } from "react-select";
+import Select, { Options } from "react-select";
 import { optionIndexKeys } from "src/components/PageHome/filterExperiments";
 import {
   FilterOptions,
@@ -95,12 +95,26 @@ export const FilterBar: React.FC<FilterBarProps> = ({
           optionLabelName="label"
           {...{ filterValue, onChange }}
         />
+        <FilterSelect
+          fieldLabel="Takeaway"
+          fieldOptions={options.takeaways!}
+          filterValueName="takeaways"
+          optionLabelName="label"
+          {...{ filterValue, onChange }}
+        />
+        <FilterSelect
+          fieldLabel="QA Status"
+          fieldOptions={options.qaStatus!}
+          filterValueName="qaStatus"
+          optionLabelName="label"
+          {...{ filterValue, onChange }}
+        />
       </Nav>
     </Navbar>
   );
 };
 
-type FilterSelectProps<
+export type FilterSelectProps<
   K extends FilterValueKeys,
   T extends NonNullFilterOptions<K>,
 > = {
@@ -109,10 +123,10 @@ type FilterSelectProps<
   filterValueName: K;
   fieldLabel: string;
   fieldOptions: T;
-  optionLabelName: keyof NonNullFilterOption<K>;
+  optionLabelName?: keyof NonNullFilterOption<K>;
 };
 
-const FilterSelect = <
+export const FilterSelect = <
   K extends FilterValueKeys,
   T extends NonNullFilterOptions<K>,
 >({
@@ -123,7 +137,8 @@ const FilterSelect = <
   fieldOptions,
   optionLabelName,
 }: FilterSelectProps<K, T>) => {
-  const filterOptions = useMemo(
+  type OptionType = Record<string, any>;
+  const filterOptions: Options<OptionType> = useMemo(
     () =>
       (fieldOptions! as NonNullFilterOptions<K>).filter(
         (option): option is NonNullable<typeof option> => !!option,
@@ -145,22 +160,22 @@ const FilterSelect = <
           isMulti: true,
           value: fieldValue,
           isDisabled: loading,
-          placeholder: "All " + fieldLabel + "s",
-          getOptionLabel: (item: OptionTypeBase) =>
+          placeholder: pluralizeTitle(fieldLabel),
+          getOptionLabel: (item: OptionType) =>
             fieldLabel === "Feature"
               ? item[optionLabelName as string] +
                 ` (${displayConfigLabelOrNotSet(
-                  item["application"],
+                  item["application" as keyof OptionType],
                   applications,
                 )})`
               : item[optionLabelName as string],
-          getOptionValue: (item: OptionTypeBase) =>
+          getOptionValue: (item: OptionType) =>
             optionIndexKeys[filterValueName](
               // @ts-ignore because this works in practice but types disagree
               item as NonNullFilterOption<K>,
             )!,
-          options: filterOptions,
-          onChange: (fieldValue: OptionsType<OptionTypeBase>) => {
+          options: filterOptions as Options<OptionType>,
+          onChange: (fieldValue: Options<OptionType>) => {
             onChange({
               ...filterValue,
               [filterValueName]: fieldValue,
@@ -170,6 +185,11 @@ const FilterSelect = <
       />
     </Nav.Item>
   );
+};
+
+export const pluralizeTitle = (fieldLabel: string) => {
+  const label = fieldLabel.endsWith("s") ? fieldLabel + "es" : fieldLabel + "s";
+  return "All " + label;
 };
 
 export default FilterBar;

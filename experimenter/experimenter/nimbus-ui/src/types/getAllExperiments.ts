@@ -3,7 +3,7 @@
 // @generated
 // This file was automatically generated and should not be edited.
 
-import { NimbusExperimentApplicationEnum, NimbusExperimentFirefoxVersionEnum, NimbusExperimentStatusEnum, NimbusExperimentPublishStatusEnum, NimbusExperimentChannelEnum } from "./globalTypes";
+import { NimbusExperimentApplicationEnum, NimbusExperimentFirefoxVersionEnum, NimbusExperimentStatusEnum, NimbusExperimentPublishStatusEnum, NimbusExperimentQAStatusEnum, NimbusExperimentChannelEnum } from "./globalTypes";
 
 // ====================================================
 // GraphQL query operation: getAllExperiments
@@ -23,7 +23,6 @@ export interface getAllExperiments_experiments_featureConfigs {
   description: string | null;
   application: NimbusExperimentApplicationEnum | null;
   ownerEmail: string | null;
-  schema: string | null;
 }
 
 export interface getAllExperiments_experiments_targetingConfig {
@@ -33,11 +32,6 @@ export interface getAllExperiments_experiments_targetingConfig {
   applicationValues: (string | null)[] | null;
   stickyRequired: boolean | null;
   isFirstRunRequired: boolean | null;
-}
-
-export interface getAllExperiments_experiments_featureConfig {
-  slug: string;
-  name: string;
 }
 
 export interface getAllExperiments_experiments_projects {
@@ -50,7 +44,7 @@ export interface getAllExperiments_experiments {
   isRollout: boolean | null;
   name: string;
   owner: getAllExperiments_experiments_owner;
-  featureConfigs: (getAllExperiments_experiments_featureConfigs | null)[] | null;
+  featureConfigs: getAllExperiments_experiments_featureConfigs[] | null;
   targetingConfig: (getAllExperiments_experiments_targetingConfig | null)[] | null;
   slug: string;
   application: NimbusExperimentApplicationEnum | null;
@@ -68,16 +62,18 @@ export interface getAllExperiments_experiments {
   status: NimbusExperimentStatusEnum | null;
   statusNext: NimbusExperimentStatusEnum | null;
   publishStatus: NimbusExperimentPublishStatusEnum | null;
+  qaStatus: NimbusExperimentQAStatusEnum | null;
   monitoringDashboardUrl: string | null;
   rolloutMonitoringDashboardUrl: string | null;
   resultsExpectedDate: DateTime | null;
   resultsReady: boolean | null;
   showResultsUrl: boolean | null;
-  featureConfig: getAllExperiments_experiments_featureConfig | null;
   channel: NimbusExperimentChannelEnum | null;
   populationPercent: string | null;
   projects: (getAllExperiments_experiments_projects | null)[] | null;
   hypothesis: string | null;
+  takeawaysMetricGain: boolean;
+  takeawaysQbrLearning: boolean;
 }
 
 export interface getAllExperiments {

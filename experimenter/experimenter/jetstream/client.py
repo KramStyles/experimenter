@@ -6,10 +6,18 @@ from itertools import chain
 
 from django.conf import settings
 from django.core.files.storage import default_storage
+from mozilla_nimbus_schemas.jetstream import (
+    AnalysisBasis,
+    AnalysisErrors,
+    Metadata,
+    SampleSizes,
+    Statistics,
+)
 
+from experimenter.experiments.models import NimbusExperiment
 from experimenter.jetstream.models import (
     METRIC_GROUP,
-    AnalysisBasis,
+    AnalysisWindow,
     Group,
     JetstreamData,
     Metric,
@@ -17,12 +25,13 @@ from experimenter.jetstream.models import (
     Statistic,
     create_results_object_model,
 )
+from experimenter.outcomes import Metric as OutcomeMetric
 from experimenter.outcomes import Outcomes
 
-BRANCH_DATA = "branch_data"
 STATISTICS_FOLDER = "statistics"
 METADATA_FOLDER = "metadata"
 ERRORS_FOLDER = "errors"
+SIZING_FOLDER = "sample_sizes"
 ALL_STATISTICS = {
     Statistic.BINOMIAL,
     Statistic.MEAN,
@@ -31,48 +40,69 @@ ALL_STATISTICS = {
 }
 
 
-class AnalysisWindow:
-    DAILY = "daily"
-    WEEKLY = "weekly"
-    OVERALL = "overall"
-
-
 def load_data_from_gcs(path):
     if default_storage.exists(path):
         return json.loads(default_storage.open(path).read())
 
 
+def validate_data(data_json):
+    if data_json:
+        Statistics.parse_obj(data_json)
+    return data_json
+
+
 def get_data(slug, window):
     filename = f"statistics_{slug}_{window}.json"
     path = os.path.join(STATISTICS_FOLDER, filename)
-    return load_data_from_gcs(path)
+    return validate_data(load_data_from_gcs(path))
+
+
+def validate_metadata(metadata_json):
+    if metadata_json:
+        Metadata.parse_obj(metadata_json)
+    return metadata_json
 
 
 def get_metadata(slug):
     filename = f"metadata_{slug}.json"
     path = os.path.join(METADATA_FOLDER, filename)
-    return load_data_from_gcs(path)
+    return validate_metadata(load_data_from_gcs(path))
+
+
+def validate_analysis_errors(analysis_errors_json):
+    if analysis_errors_json:
+        AnalysisErrors.parse_obj(analysis_errors_json)
+    return analysis_errors_json
 
 
 def get_analysis_errors(slug):
     filename = f"errors_{slug}.json"
     path = os.path.join(ERRORS_FOLDER, filename)
+    return validate_analysis_errors(load_data_from_gcs(path))
+
+
+def get_sizing_data(suffix="latest"):
+    filename = f"sample_sizes_auto_sizing_results_{suffix}.json"
+    path = os.path.join(SIZING_FOLDER, filename)
     return load_data_from_gcs(path)
 
 
 def get_results_metrics_map(
-    data, primary_outcome_slugs, secondary_outcome_slugs, outcomes_metadata
+    data: JetstreamData,
+    primary_outcome_slugs: list[str],
+    secondary_outcome_slugs: list[str],
+    outcomes_metadata,
 ):
     # A mapping of metric label to relevant statistic. This is
     # used to see which statistic will be used for each metric.
-    RESULTS_METRICS_MAP = {
+    results_metrics_map: dict[str, set[Statistic]] = {
         Metric.RETENTION: {Statistic.BINOMIAL},
         Metric.SEARCH: {Statistic.MEAN},
         Metric.DAYS_OF_USE: {Statistic.MEAN},
         Metric.USER_COUNT: {Statistic.COUNT, Statistic.PERCENT},
     }
-    primary_metrics_set = set()
-    primary_outcome_metrics = list(
+    primary_metrics_set: set[str] = set()
+    primary_outcome_metrics: list[OutcomeMetric] = list(
         chain.from_iterable(
             [
                 outcome.metrics
@@ -99,22 +129,24 @@ def get_results_metrics_map(
     for metric in primary_outcome_metrics:
         # validate against jetstream metadata unless we couldn't get it
         if bypass_jetstream_check or metric.slug in metrics_set_from_jetstream:
-            RESULTS_METRICS_MAP[metric.slug] = ALL_STATISTICS
+            results_metrics_map[metric.slug] = ALL_STATISTICS
 
             primary_metrics_set.add(metric.slug)
 
     for outcome_slug in secondary_outcome_slugs:
-        RESULTS_METRICS_MAP[outcome_slug] = ALL_STATISTICS
+        results_metrics_map[outcome_slug] = ALL_STATISTICS
 
     other_metrics_map, other_metrics = get_other_metrics_names_and_map(
-        data, RESULTS_METRICS_MAP
+        data, results_metrics_map
     )
-    RESULTS_METRICS_MAP |= other_metrics_map
+    results_metrics_map |= other_metrics_map
 
-    return RESULTS_METRICS_MAP, primary_metrics_set, other_metrics
+    return results_metrics_map, primary_metrics_set, other_metrics
 
 
-def get_other_metrics_names_and_map(data, RESULTS_METRICS_MAP):
+def get_other_metrics_names_and_map(
+    data: JetstreamData, results_metrics_map: dict[str, set[Statistic]]
+):
     # These are metrics sent from Jetstream that are not explicitly chosen
     # by users to be either primary or secondary
     other_metrics_names = {}
@@ -123,7 +155,7 @@ def get_other_metrics_names_and_map(data, RESULTS_METRICS_MAP):
     # This is an ordered list of priorities of stats to graph
     priority_stats = [Statistic.MEAN, Statistic.BINOMIAL]
     other_data = [
-        data_point for data_point in data if data_point.metric not in RESULTS_METRICS_MAP
+        data_point for data_point in data if data_point.metric not in results_metrics_map
     ]
     for jetstream_data_point in other_data:
         metric = jetstream_data_point.metric
@@ -148,11 +180,11 @@ def get_other_metrics_names_and_map(data, RESULTS_METRICS_MAP):
     return other_metrics_map, other_metrics_names
 
 
-def get_experiment_data(experiment):
+def get_experiment_data(experiment: NimbusExperiment):
     recipe_slug = experiment.slug.replace("-", "_")
-    windows = [AnalysisWindow.DAILY, AnalysisWindow.WEEKLY, AnalysisWindow.OVERALL]
+    # we don't use DAILY results in Experimenter, so only get WEEKLY/OVERALL
+    windows = [AnalysisWindow.WEEKLY, AnalysisWindow.OVERALL]
     raw_data = {
-        AnalysisWindow.DAILY: {},
         AnalysisWindow.WEEKLY: {},
         AnalysisWindow.OVERALL: {},
     }
@@ -165,6 +197,9 @@ def get_experiment_data(experiment):
     experiment_errors = get_analysis_errors(recipe_slug)
 
     experiment_data = {
+        # DAILY included for backwards compatibility with UI
+        # TODO: remove DAILY after updating UI
+        AnalysisWindow.DAILY: {},
         "show_analysis": settings.FEATURE_ANALYSIS,
         "metadata": experiment_metadata,
     }
@@ -177,12 +212,13 @@ def get_experiment_data(experiment):
         segment_points_exposures = defaultdict(list)
 
         for point in data_from_jetstream:
+            segment_key = point["segment"]
             if point["analysis_basis"] == AnalysisBasis.ENROLLMENTS:
-                segment_points_enrollments[point["segment"]].append(point)
+                segment_points_enrollments[segment_key].append(point)
                 experiment_data[window][AnalysisBasis.ENROLLMENTS] = {}
                 raw_data[window][AnalysisBasis.ENROLLMENTS] = {}
             elif point["analysis_basis"] == AnalysisBasis.EXPOSURES:
-                segment_points_exposures[point["segment"]].append(point)
+                segment_points_exposures[segment_key].append(point)
                 experiment_data[window][AnalysisBasis.EXPOSURES] = {}
                 raw_data[window][AnalysisBasis.EXPOSURES] = {}
 
@@ -201,12 +237,13 @@ def get_experiment_data(experiment):
                 outcomes_metadata,
             )
             if data and window == AnalysisWindow.OVERALL:
-                # Append some values onto Jetstream data
+                # Append some values onto the incoming Jetstream data
                 data.append_population_percentages()
                 data.append_retention_data(
                     raw_data[AnalysisWindow.WEEKLY][AnalysisBasis.ENROLLMENTS][segment]
                 )
 
+                # Create the output object (overall data)
                 ResultsObjectModel = create_results_object_model(data)
                 data = ResultsObjectModel(result_metrics, data, experiment)
                 data.append_conversion_count(primary_metrics_set)
@@ -214,9 +251,17 @@ def get_experiment_data(experiment):
                 if segment == Segment.ALL:
                     experiment_data["other_metrics"] = other_metrics
             elif data and window == AnalysisWindow.WEEKLY:
+                # Create the output object (weekly data)
                 ResultsObjectModel = create_results_object_model(data)
                 data = ResultsObjectModel(result_metrics, data, experiment, window)
 
+                # DAILY included for backwards compatibility with UI
+                # TODO: remove DAILY after updating UI
+                experiment_data[AnalysisWindow.DAILY][AnalysisBasis.ENROLLMENTS] = {
+                    "all": []
+                }
+
+            # Convert output object to dict and put into the final object
             transformed_data = data.dict(exclude_none=True) or None
             experiment_data[window][AnalysisBasis.ENROLLMENTS][segment] = transformed_data
 
@@ -248,6 +293,12 @@ def get_experiment_data(experiment):
             elif data and window == AnalysisWindow.WEEKLY:
                 ResultsObjectModel = create_results_object_model(data)
                 data = ResultsObjectModel(result_metrics, data, experiment, window)
+
+                # DAILY included for backwards compatibility with UI
+                # TODO: remove DAILY after updating UI
+                experiment_data[AnalysisWindow.DAILY][AnalysisBasis.EXPOSURES] = {
+                    "all": []
+                }
 
             transformed_data = data.dict(exclude_none=True) or None
             experiment_data[window][AnalysisBasis.EXPOSURES][segment] = transformed_data
@@ -281,3 +332,9 @@ def get_experiment_data(experiment):
     experiment_data["errors"] = errors_by_metric
 
     return {"v2": experiment_data}
+
+
+def get_population_sizing_data():
+    sizing_data = get_sizing_data(suffix="latest")
+    sizing = SampleSizes.parse_obj(sizing_data) if sizing_data is not None else {}
+    return {"v1": sizing}

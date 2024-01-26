@@ -2,6 +2,7 @@ import markus
 from celery.utils.log import get_task_logger
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 from experimenter.celery import app
 from experimenter.experiments.api.v6.serializers import NimbusExperimentSerializer
@@ -35,6 +36,7 @@ def nimbus_check_kinto_push_queue():
     for collection in (
         settings.KINTO_COLLECTION_NIMBUS_DESKTOP,
         settings.KINTO_COLLECTION_NIMBUS_MOBILE,
+        settings.KINTO_COLLECTION_NIMBUS_WEB,
     ):
         nimbus_check_kinto_push_queue_by_collection.delay(collection)
 
@@ -106,6 +108,8 @@ def handle_pending_review(applications):
     if experiment := NimbusExperiment.objects.waiting(applications).first():
         if experiment.should_timeout:
             experiment.publish_status = NimbusExperiment.PublishStatus.REVIEW
+            if experiment.status == experiment.Status.DRAFT:
+                experiment.published_date = None
             experiment.save()
 
             generate_nimbus_changelog(
@@ -137,6 +141,8 @@ def handle_rejection(applications, kinto_client):
         experiment.publish_status = NimbusExperiment.PublishStatus.IDLE
         experiment.status_next = None
         experiment.is_paused = False
+        if experiment.status == experiment.Status.DRAFT:
+            experiment.published_date = None
         experiment.save()
 
         generate_nimbus_changelog(
@@ -235,6 +241,8 @@ def handle_waiting_experiments(applications):
     for experiment in waiting_experiments:
         experiment.status_next = None
         experiment.publish_status = NimbusExperiment.PublishStatus.IDLE
+        if experiment.status == experiment.Status.DRAFT:
+            experiment.published_date = None
         experiment.save()
 
         generate_nimbus_changelog(
@@ -262,6 +270,12 @@ def nimbus_push_experiment_to_kinto(collection, experiment_id):
         logger.info(f"Pushing {experiment.slug} to Kinto")
 
         kinto_client = KintoClient(collection)
+
+        if (
+            experiment.published_date is None
+            or experiment.status == experiment.Status.DRAFT
+        ):
+            experiment.published_date = timezone.now()
 
         data = NimbusExperimentSerializer(experiment).data
 
@@ -388,8 +402,6 @@ def nimbus_synchronize_preview_experiments_in_kinto():
 
         for experiment in should_unpublish_experiments:
             kinto_client.delete_record(experiment.slug)
-            experiment.published_dto = None
-            experiment.save()
             logger.info(f"{experiment.slug} is being removed from preview")
 
         metrics.incr("nimbus_synchronize_preview_experiments_in_kinto.completed")
@@ -417,6 +429,7 @@ def nimbus_send_emails():
     for experiment in experiments:
         if (
             experiment.should_end_enrollment
+            and not experiment.is_rollout
             and not experiment.emails.filter(
                 type=NimbusExperiment.EmailType.ENROLLMENT_END
             ).exists()

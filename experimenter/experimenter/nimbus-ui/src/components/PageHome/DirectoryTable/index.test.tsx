@@ -17,12 +17,14 @@ import DirectoryTable, {
   DirectoryColumnFirefoxMinVersion,
   DirectoryColumnOwner,
   DirectoryColumnPopulationPercent,
+  DirectoryColumnQA,
   DirectoryColumnStartDate,
   DirectoryColumnTitle,
   DirectoryColumnUnpublishedUpdates,
   SortableColumnTitle,
 } from "src/components/PageHome/DirectoryTable";
 import { UpdateSearchParams } from "src/hooks/useSearchParamsState";
+import { QA_STATUS_PROPERTIES } from "src/lib/constants";
 import { getProposedEnrollmentRange, humanDate } from "src/lib/dateUtils";
 import {
   mockDirectoryExperiments,
@@ -30,6 +32,7 @@ import {
 } from "src/lib/mocks";
 import { RouterSlugProvider } from "src/lib/test-utils";
 import { getAllExperiments_experiments } from "src/types/getAllExperiments";
+import { NimbusExperimentQAStatusEnum } from "src/types/globalTypes";
 
 const experiment = mockSingleDirectoryExperiment();
 
@@ -86,6 +89,33 @@ describe("DirectoryColumnOwner", () => {
   });
 });
 
+describe("DirectoryColumnQA", () => {
+  it("renders the QA status field if present", () => {
+    render(
+      <TestTable>
+        <DirectoryColumnQA {...experiment} />
+      </TestTable>,
+    );
+    expect(screen.getByTestId("directory-table-cell-qa")).toHaveTextContent(
+      QA_STATUS_PROPERTIES[NimbusExperimentQAStatusEnum.GREEN].emoji,
+    );
+  });
+
+  it("renders nothing if qa status is not set", () => {
+    render(
+      <TestTable>
+        <DirectoryColumnQA
+          {...experiment}
+          qaStatus={NimbusExperimentQAStatusEnum.NOT_SET}
+        />
+      </TestTable>,
+    );
+    expect(screen.queryByTestId("directory-table-cell-qa")).toHaveTextContent(
+      "",
+    );
+  });
+});
+
 describe("DirectoryColumnFeature", () => {
   it("renders the feature config if present", () => {
     render(
@@ -95,13 +125,18 @@ describe("DirectoryColumnFeature", () => {
     );
     expect(
       screen.getByTestId("directory-feature-config-name"),
-    ).toHaveTextContent(experiment.featureConfig!.name);
+    ).toHaveTextContent(
+      experiment
+        .featureConfigs!.map((fc) => fc?.name)
+        .sort()
+        .join(", "),
+    );
   });
 
   it("renders the None label if feature config is not present", () => {
     render(
       <TestTable>
-        <DirectoryColumnFeature {...experiment} featureConfig={null} />
+        <DirectoryColumnFeature {...experiment} featureConfigs={[]} />
       </TestTable>,
     );
     expect(
@@ -392,6 +427,7 @@ describe("DirectoryTable", () => {
       );
       expectTableCells("directory-table-header", [
         "Name",
+        "QA",
         "Owner",
         "Feature",
         "Application",
@@ -408,7 +444,10 @@ describe("DirectoryTable", () => {
       expectTableCells("directory-table-cell", [
         experiment.name,
         experiment.owner!.username,
-        experiment.featureConfig!.name,
+        experiment
+          .featureConfigs!.map((fc) => fc?.name)
+          .sort()
+          .join(", "),
         "Desktop",
         "Desktop Nightly",
         experiment.populationPercent!.toString(),

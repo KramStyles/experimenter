@@ -1,7 +1,7 @@
 import os
 import time
 import uuid
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import pytest
 import requests
@@ -11,6 +11,7 @@ from requests.packages.urllib3.util.retry import Retry
 from nimbus.kinto.client import (
     KINTO_COLLECTION_DESKTOP,
     KINTO_COLLECTION_MOBILE,
+    KINTO_COLLECTION_WEB,
     KintoClient,
 )
 from nimbus.models.base_dataclass import (
@@ -21,59 +22,65 @@ from nimbus.models.base_dataclass import (
     BaseExperimentDataClass,
     BaseExperimentMetricsDataClass,
 )
+from nimbus.pages.demo_app.frontend import DemoAppPage
 from nimbus.pages.experimenter.home import HomePage
 from nimbus.utils import helpers
 
 APPLICATION_FEATURE_IDS = {
-    BaseExperimentApplications.FIREFOX_DESKTOP: "1",
-    BaseExperimentApplications.FENIX: "2",
-    BaseExperimentApplications.IOS: "3",
-    BaseExperimentApplications.FOCUS_ANDROID: "4",
-    BaseExperimentApplications.FOCUS_IOS: "6",
+    BaseExperimentApplications.FIREFOX_DESKTOP.value: helpers.get_feature_id_as_string(
+        "no-feature-firefox-desktop", BaseExperimentApplications.FIREFOX_DESKTOP.value
+    ),
+    BaseExperimentApplications.FIREFOX_FENIX.value: helpers.get_feature_id_as_string(
+        "no-feature-fenix", BaseExperimentApplications.FIREFOX_FENIX.value
+    ),
+    BaseExperimentApplications.FIREFOX_IOS.value: helpers.get_feature_id_as_string(
+        "no-feature-ios", BaseExperimentApplications.FIREFOX_IOS.value
+    ),
+    BaseExperimentApplications.FOCUS_ANDROID.value: helpers.get_feature_id_as_string(
+        "no-feature-focus-android", BaseExperimentApplications.FOCUS_ANDROID.value
+    ),
+    BaseExperimentApplications.FOCUS_IOS.value: helpers.get_feature_id_as_string(
+        "no-feature-focus-ios", BaseExperimentApplications.FOCUS_IOS.value
+    ),
+    BaseExperimentApplications.DEMO_APP.value: helpers.get_feature_id_as_string(
+        "example-feature", BaseExperimentApplications.DEMO_APP.value
+    ),
 }
 
+
 APPLICATION_KINTO_REVIEW_PATH = {
-    BaseExperimentApplications.FIREFOX_DESKTOP: (
+    BaseExperimentApplications.FIREFOX_DESKTOP.value: (
         "#/buckets/main-workspace/collections/nimbus-desktop-experiments/simple-review"
     ),
-    BaseExperimentApplications.FENIX: (
+    BaseExperimentApplications.FIREFOX_FENIX.value: (
         "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
     ),
-    BaseExperimentApplications.IOS: (
+    BaseExperimentApplications.FIREFOX_IOS.value: (
         "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
     ),
-    BaseExperimentApplications.FOCUS_ANDROID: (
+    BaseExperimentApplications.FOCUS_ANDROID.value: (
         "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
     ),
-    BaseExperimentApplications.FOCUS_IOS: (
+    BaseExperimentApplications.FOCUS_IOS.value: (
         "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
+    ),
+    BaseExperimentApplications.DEMO_APP.value: (
+        "#/buckets/main-workspace/collections/nimbus-web-experiments/simple-review"
     ),
 }
 
 APPLICATION_KINTO_COLLECTION = {
-    "DESKTOP": KINTO_COLLECTION_DESKTOP,
-    "FENIX": KINTO_COLLECTION_MOBILE,
-    "IOS": KINTO_COLLECTION_MOBILE,
-    "FOCUS_ANDROID": KINTO_COLLECTION_MOBILE,
-    "FOCUS_IOS": KINTO_COLLECTION_MOBILE,
+    BaseExperimentApplications.FIREFOX_DESKTOP.value: KINTO_COLLECTION_DESKTOP,
+    BaseExperimentApplications.FIREFOX_FENIX.value: KINTO_COLLECTION_MOBILE,
+    BaseExperimentApplications.FIREFOX_IOS.value: KINTO_COLLECTION_MOBILE,
+    BaseExperimentApplications.FOCUS_ANDROID.value: KINTO_COLLECTION_MOBILE,
+    BaseExperimentApplications.FOCUS_IOS.value: KINTO_COLLECTION_MOBILE,
+    BaseExperimentApplications.DEMO_APP.value: KINTO_COLLECTION_WEB,
 }
 
 
-@pytest.fixture
-def slugify():
-    def _slugify(name):
-        return name.lower().replace(" ", "-").replace("[", "").replace("]", "")
-
-    return _slugify
-
-
-@pytest.fixture
-def json_url(slugify):
-    def _json_url(base_url, title):
-        base_url = urlparse(base_url)
-        return f"https://{base_url.netloc}/api/v6/experiments/{slugify(title)}"
-
-    return _json_url
+def slugify(name):
+    return name.lower().replace(" ", "-").replace("[", "").replace("]", "")
 
 
 @pytest.fixture
@@ -95,11 +102,10 @@ def firefox_options(firefox_options):
 
 
 @pytest.fixture
-def selenium(selenium, experiment_name, kinto_client, base_url, slugify):
+def selenium(selenium, experiment_slug, kinto_client):
     yield selenium
 
     if os.getenv("CIRCLECI") is None:
-        experiment_slug = str(slugify(experiment_name))
         try:
             helpers.end_experiment(experiment_slug)
             kinto_client.approve()
@@ -108,17 +114,13 @@ def selenium(selenium, experiment_name, kinto_client, base_url, slugify):
 
 
 @pytest.fixture(
-    # Use all applications as available parameters in parallel_pytest_args.txt
+    # Use all applications as available parameters in circle config
     params=list(BaseExperimentApplications),
     ids=[application.name for application in BaseExperimentApplications],
     autouse=True,
 )
 def application(request):
-    """
-    Returns the current application to use for testing
-    Will also parametrize the tests
-    """
-    return request.param
+    return request.param.value
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -134,7 +136,7 @@ def _verify_url(request, base_url):
 
 @pytest.fixture
 def kinto_client(default_data):
-    return KintoClient(APPLICATION_KINTO_COLLECTION[default_data.application.value])
+    return KintoClient(APPLICATION_KINTO_COLLECTION[default_data.application])
 
 
 @pytest.fixture
@@ -148,13 +150,18 @@ def drafts_tab_url(base_url):
 
 
 @pytest.fixture
-def experiment_url(base_url, default_data, slugify):
-    return urljoin(base_url, slugify(default_data.public_name))
+def experiment_name(request):
+    return f"{request.node.name[:75]}{str(uuid.uuid4())[:4]}"
 
 
 @pytest.fixture
-def experiment_name(request):
-    return f"{request.node.name[:75]}{str(uuid.uuid4())[:4]}"
+def experiment_slug(experiment_name):
+    return slugify(experiment_name)
+
+
+@pytest.fixture
+def experiment_url(base_url, experiment_slug):
+    return urljoin(base_url, experiment_slug)
 
 
 @pytest.fixture(name="load_experiment_outcomes")
@@ -179,23 +186,17 @@ def default_data(application, experiment_name, load_experiment_outcomes):
     feature_config_id = APPLICATION_FEATURE_IDS[application]
 
     outcomes = {
-        "firefox_desktop": BaseExperimentMetricsDataClass(
+        BaseExperimentApplications.FIREFOX_DESKTOP.value: BaseExperimentMetricsDataClass(
             primary_outcomes=[load_experiment_outcomes["firefox_desktop"][0]],
             secondary_outcomes=[load_experiment_outcomes["firefox_desktop"][1]],
         ),
-        "fenix": BaseExperimentMetricsDataClass(
+        BaseExperimentApplications.FIREFOX_FENIX.value: BaseExperimentMetricsDataClass(
             primary_outcomes=[load_experiment_outcomes["fenix"][0]],
             secondary_outcomes=[load_experiment_outcomes["fenix"][1]],
         ),
-        "ios": BaseExperimentMetricsDataClass(
+        BaseExperimentApplications.FIREFOX_IOS.value: BaseExperimentMetricsDataClass(
             primary_outcomes=[load_experiment_outcomes["firefox_ios"][0]],
             secondary_outcomes=[load_experiment_outcomes["firefox_ios"][1]],
-        ),
-        "focus_ios": BaseExperimentMetricsDataClass(
-            primary_outcomes=[], secondary_outcomes=[]
-        ),
-        "focus_android": BaseExperimentMetricsDataClass(
-            primary_outcomes=[], secondary_outcomes=[]
         ),
     }
 
@@ -215,7 +216,13 @@ def default_data(application, experiment_name, load_experiment_outcomes):
                 description="treatment description",
             ),
         ],
-        metrics=outcomes[str(application).lower().rsplit(".")[-1]],
+        metrics=outcomes.get(
+            application,
+            BaseExperimentMetricsDataClass(
+                primary_outcomes=[],
+                secondary_outcomes=[],
+            ),
+        ),
         audience=BaseExperimentAudienceDataClass(
             channel=BaseExperimentAudienceChannels.RELEASE,
             min_version=106,
@@ -232,12 +239,17 @@ def default_data(application, experiment_name, load_experiment_outcomes):
 
 @pytest.fixture
 def create_experiment(base_url, default_data):
-    def _create_experiment(selenium, is_rollout=False):
+    def _create_experiment(
+        selenium,
+        is_rollout=False,
+        reference_branch_value="{}",
+        treatment_branch_value="{}",
+    ):
         home = HomePage(selenium, base_url).open()
         experiment = home.create_new_button()
         experiment.public_name = default_data.public_name
         experiment.hypothesis = default_data.hypothesis
-        experiment.application = default_data.application.value
+        experiment.application = default_data.application
 
         # Fill Overview Page
         overview = experiment.save_and_continue()
@@ -258,13 +270,13 @@ def create_experiment(base_url, default_data):
         branches = overview.save_and_continue()
         branches.feature_config = default_data.feature_config_id
         branches.reference_branch_description = default_data.branches[0].description
-        branches.reference_branch_value = "{}"
+        branches.reference_branch_value = reference_branch_value
 
         if is_rollout:
             branches.make_rollout()
         else:
             branches.treatment_branch_description = default_data.branches[1].description
-            branches.treatment_branch_value = "{}"
+            branches.treatment_branch_value = treatment_branch_value
 
         # Fill Metrics page
         metrics = branches.save_and_continue()
@@ -281,16 +293,22 @@ def create_experiment(base_url, default_data):
         # Fill Audience page
         audience = metrics.save_and_continue()
         audience.channel = default_data.audience.channel.value
-        audience.min_version = default_data.audience.min_version
 
-        audience.targeting = default_data.audience.targeting
-        audience.percentage = default_data.audience.percentage
+        audience.targeting = "no_targeting"
+        audience.percentage = "100"
         audience.expected_clients = default_data.audience.expected_clients
-        audience.countries = ["Canada"]
-        if default_data.application.value != "DESKTOP":
-            audience.languages = ["English"]
-        else:
-            audience.locales = ["English (US)"]
+        if default_data.application != BaseExperimentApplications.DEMO_APP.value:
+            audience.min_version = default_data.audience.min_version
+            audience.percentage = default_data.audience.percentage
+            audience.targeting = default_data.audience.targeting
+            audience.countries = ["Canada"]
+            if (
+                default_data.application
+                != BaseExperimentApplications.FIREFOX_DESKTOP.value
+            ):
+                audience.languages = ["English"]
+            else:
+                audience.locales = ["English (US)"]
         return audience.save_and_continue()
 
     return _create_experiment
@@ -318,34 +336,34 @@ def trigger_experiment_loader(selenium):
     return _trigger_experiment_loader
 
 
-@pytest.fixture(name="experiment_default_data")
-def fixture_experiment_default_data():
+@pytest.fixture()
+def default_data_api(application):
+    feature_config_id = APPLICATION_FEATURE_IDS[application]
     return {
         "hypothesis": "Test Hypothesis",
-        "application": "DESKTOP",
+        "application": application,
         "changelogMessage": "test updates",
         "targetingConfigSlug": "no_targeting",
         "publicDescription": "Some sort of Fancy Words",
         "riskRevenue": False,
         "riskPartnerRelated": False,
         "riskBrand": False,
-        "featureConfigId": 1,
+        "featureConfigIds": [int(feature_config_id)],
         "referenceBranch": {
             "description": "reference branch",
             "name": "Branch 1",
             "ratio": 50,
-            "featureValue": "{}",
+            "featureValues": [
+                {
+                    "featureConfig": str(feature_config_id),
+                    "value": "{}",
+                },
+            ],
         },
-        "treatmentBranches": [
-            {
-                "description": "treatment branch",
-                "name": "Branch 2",
-                "ratio": 50,
-                "featureValue": "",
-            }
-        ],
+        "treatmentBranches": [],
         "populationPercent": "100",
         "totalEnrolledClients": 55,
+        "firefoxMinVersion": "FIREFOX_120",
     }
 
 
@@ -366,8 +384,7 @@ def fixture_check_ping_for_experiment(trigger_experiment_loader):
                     return True
             time.sleep(5)
             trigger_experiment_loader()
-        else:
-            return False
+        return False
 
     return _check_ping_for_experiment
 
@@ -387,10 +404,14 @@ def fixture_telemetry_event_check(trigger_experiment_loader):
                 for item in _event:
                     if (experiment and event) in item:
                         return True
-            else:
-                raise AssertionError
+            raise AssertionError
         except (AssertionError, TypeError):
             trigger_experiment_loader()
             return False
 
     return _telemetry_event_check
+
+
+@pytest.fixture
+def demo_app(selenium, experiment_url):
+    return DemoAppPage(selenium, experiment_url)

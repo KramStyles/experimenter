@@ -51,6 +51,7 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "channel": NimbusExperiment.Channel.NO_CHANNEL,
                 "conclusion_recommendation": None,
                 "countries": [],
+                "excluded_experiments": [],
                 "feature_configs": [],
                 "firefox_max_version": NimbusExperiment.Version.NO_VERSION,
                 "firefox_min_version": NimbusExperiment.Version.NO_VERSION,
@@ -60,8 +61,8 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "is_first_run": experiment.is_first_run,
                 "is_localized": experiment.is_localized,
                 "is_paused": False,
-                "is_rollout_dirty": False,
                 "is_rollout": experiment.is_rollout,
+                "is_rollout_dirty": False,
                 "is_sticky": False,
                 "languages": [],
                 "locales": [],
@@ -79,7 +80,10 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "public_description": "",
                 "publish_status": NimbusExperiment.PublishStatus.IDLE,
                 "published_dto": None,
+                "qa_comment": None,
+                "qa_status": NimbusExperiment.QAStatus.NOT_SET,
                 "reference_branch": None,
+                "required_experiments": [],
                 "results_data": None,
                 "risk_brand": None,
                 "risk_mitigation_link": "",
@@ -87,12 +91,17 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "risk_revenue": None,
                 "secondary_outcomes": [],
                 "slug": "",
-                "status_next": None,
                 "status": NimbusExperiment.Status.DRAFT,
+                "status_next": None,
+                "subscribers": [],
+                "takeaways_gain_amount": None,
+                "takeaways_metric_gain": False,
+                "takeaways_qbr_learning": False,
                 "takeaways_summary": None,
                 "targeting_config_slug": NimbusExperiment.TargetingConfig.NO_TARGETING,
                 "total_enrolled_clients": 0,
                 "warn_feature_schema": False,
+                "published_date": None,
             },
         )
 
@@ -103,6 +112,7 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
         primary_outcome = Outcomes.by_application(application)[0].slug
         secondary_outcome = Outcomes.by_application(application)[1].slug
         parent_experiment = NimbusExperimentFactory.create()
+        subscriber = UserFactory.create()
 
         updated_time = timezone.datetime(
             year=2022, month=1, day=2, hour=0, minute=0, second=0
@@ -120,6 +130,7 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 projects=[project],
                 primary_outcomes=[primary_outcome],
                 secondary_outcomes=[secondary_outcome],
+                subscribers=[subscriber],
                 parent=parent_experiment,
             )
         data = dict(NimbusExperimentChangeLogSerializer(experiment).data)
@@ -141,6 +152,7 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "application": experiment.application,
                 "channel": experiment.channel,
                 "conclusion_recommendation": None,
+                "excluded_experiments": [],
                 "firefox_max_version": experiment.firefox_max_version,
                 "firefox_min_version": experiment.firefox_min_version,
                 "hypothesis": experiment.hypothesis,
@@ -149,8 +161,8 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "is_first_run": experiment.is_first_run,
                 "is_localized": experiment.is_localized,
                 "is_paused": experiment.is_paused,
-                "is_rollout_dirty": experiment.is_rollout_dirty,
                 "is_rollout": experiment.is_rollout,
+                "is_rollout_dirty": experiment.is_rollout_dirty,
                 "is_sticky": False,
                 "localizations": experiment.localizations,
                 "name": experiment.name,
@@ -165,6 +177,9 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "proposed_release_date": "2020-01-01",
                 "public_description": experiment.public_description,
                 "publish_status": experiment.publish_status,
+                "qa_comment": experiment.qa_comment,
+                "qa_status": experiment.qa_status,
+                "required_experiments": [],
                 "results_data": None,
                 "risk_brand": experiment.risk_brand,
                 "risk_mitigation_link": experiment.risk_mitigation_link,
@@ -172,12 +187,17 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
                 "risk_revenue": experiment.risk_revenue,
                 "secondary_outcomes": [secondary_outcome],
                 "slug": experiment.slug,
-                "status_next": experiment.status_next,
                 "status": experiment.status,
+                "status_next": experiment.status_next,
+                "subscribers": [subscriber.id],
+                "takeaways_gain_amount": None,
+                "takeaways_metric_gain": False,
+                "takeaways_qbr_learning": False,
                 "takeaways_summary": None,
                 "targeting_config_slug": experiment.targeting_config_slug,
                 "total_enrolled_clients": experiment.total_enrolled_clients,
                 "warn_feature_schema": False,
+                "published_date": experiment.published_date,
             },
         )
 
@@ -186,17 +206,17 @@ class TestNimbusExperimentChangeLogSerializer(TestCase):
             dict(NimbusExperimentSerializer(experiment).data).keys(),
         )
 
-        for feature_config in experiment.feature_configs.all():
+        for feature_config in experiment.feature_configs.all().prefetch_related(
+            "schemas"
+        ):
             self.assertIn(
                 {
                     "application": feature_config.application,
                     "description": feature_config.description,
                     "name": feature_config.name,
                     "owner_email": feature_config.owner_email,
-                    "read_only": feature_config.read_only,
-                    "schema": feature_config.schema,
+                    "schema": feature_config.schemas.get(version=None).schema,
                     "slug": feature_config.slug,
-                    "sets_prefs": feature_config.sets_prefs,
                     "enabled": feature_config.enabled,
                 },
                 feature_configs_data,

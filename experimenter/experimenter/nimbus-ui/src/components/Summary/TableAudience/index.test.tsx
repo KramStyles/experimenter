@@ -4,6 +4,7 @@
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
+import { MOBILE_APPLICATIONS } from "src/components/PageEditAudience/FormAudience";
 import TableAudience from "src/components/Summary/TableAudience";
 import { MockedCache, mockExperimentQuery } from "src/lib/mocks";
 import { getExperiment_experimentBySlug } from "src/types/getExperiment";
@@ -33,6 +34,99 @@ describe("TableAudience", () => {
       );
     });
   });
+
+  describe("renders 'First Run Release Date' row for mobile", () => {
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+        MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("with proposed release date", (application) => {
+      const expectedDate = "2023-12-12";
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        application,
+        proposedReleaseDate: expectedDate,
+        isFirstRun: true,
+      });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.getByTestId("experiment-release-date")).toHaveTextContent(
+        expectedDate,
+      );
+    });
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+        MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("when not set", (application) => {
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        application,
+        isFirstRun: true,
+      });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.getByTestId("experiment-release-date")).toHaveTextContent(
+        "Not set",
+      );
+    });
+  });
+
+  describe("render First Run fields based on application", () => {
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter(
+        (application) => !MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("when application is not mobile", (application) => {
+      const { experiment } = mockExperimentQuery("demo-slug", { application });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.queryByTestId("experiment-is-first-run")).toBeNull();
+      expect(screen.queryByTestId("experiment-release-date")).toBeNull();
+    });
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+        MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("when application is mobile", (application) => {
+      const expectedDate = "2023-12-12";
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        application,
+        proposedReleaseDate: expectedDate,
+        isFirstRun: true,
+      });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.getByTestId("experiment-is-first-run")).toBeInTheDocument();
+      expect(screen.getByTestId("experiment-release-date")).toBeInTheDocument();
+    });
+  });
+
+  describe("renders 'First Run Experiment' row as expected", () => {
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+        MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("with stick enrollment True", (application) => {
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        application,
+        isFirstRun: true,
+      });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.getByTestId("experiment-is-first-run")).toHaveTextContent(
+        "True",
+      );
+    });
+    it.each(
+      Object.values(NimbusExperimentApplicationEnum).filter((application) =>
+        MOBILE_APPLICATIONS.includes(application),
+      ),
+    )("when not set", (application) => {
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        application,
+        isFirstRun: false,
+      });
+      render(<Subject {...{ experiment }} />);
+      expect(screen.getByTestId("experiment-is-first-run")).toHaveTextContent(
+        "False",
+      );
+    });
+  });
+
   describe("renders 'Minimum version' row as expected", () => {
     it("when set", () => {
       const { experiment } = mockExperimentQuery("demo-slug");
@@ -171,8 +265,8 @@ describe("TableAudience", () => {
     it("when locales exist, displays them", () => {
       const data = {
         locales: [
-          { name: "Quebecois", id: "1" },
-          { name: "Acholi", id: "2" },
+          { name: "Quebecois", id: "1", code: "Qu" },
+          { name: "Acholi", id: "2", code: "Ac" },
         ],
       };
       const { experiment } = mockExperimentQuery("demo-slug", data);
@@ -193,12 +287,13 @@ describe("TableAudience", () => {
       );
     });
   });
+
   describe("renders 'Locales' row as expected for old experiments", () => {
     it("when locales exist, displays them", () => {
       const data = {
         locales: [
-          { name: "Quebecois", id: "1" },
-          { name: "Acholi", id: "2" },
+          { name: "Quebecois", id: "1", code: "Qu" },
+          { name: "Acholi", id: "2", code: "Ac" },
         ],
         application: NimbusExperimentApplicationEnum.FENIX,
       };
@@ -220,12 +315,13 @@ describe("TableAudience", () => {
       );
     });
   });
+
   describe("renders 'Languages' row as expected", () => {
     it("when languages exist, displays them", () => {
       const data = {
         languages: [
-          { name: "English", id: "1" },
-          { name: "French", id: "2" },
+          { name: "English", id: "1", code: "En" },
+          { name: "French", id: "2", code: "Fr" },
         ],
         application: NimbusExperimentApplicationEnum.FENIX,
       };
@@ -260,12 +356,13 @@ describe("TableAudience", () => {
       );
     });
   });
+
   describe("renders 'Countries' row as expected", () => {
     it("when countries exist, displays them", async () => {
       const data = {
         countries: [
-          { name: "Canada", id: "1" },
-          { name: "Germany", id: "2" },
+          { name: "Canada", id: "1", code: "Ca" },
+          { name: "Germany", id: "2", code: "Ge" },
         ],
       };
       const { experiment } = mockExperimentQuery("demo-slug", data);
@@ -286,6 +383,7 @@ describe("TableAudience", () => {
       );
     });
   });
+
   describe("renders 'Stick Enrollment' row as expected", () => {
     it("with stick enrollment True", () => {
       const { experiment } = mockExperimentQuery("demo-slug", {
@@ -300,26 +398,6 @@ describe("TableAudience", () => {
       const { experiment } = mockExperimentQuery("demo-slug", {});
       render(<Subject {...{ experiment }} />);
       expect(screen.getByTestId("experiment-is-sticky")).toHaveTextContent(
-        "False",
-      );
-    });
-  });
-  describe("renders 'First Run Experiment' row as expected", () => {
-    it("with stick enrollment True", () => {
-      const { experiment } = mockExperimentQuery("demo-slug", {
-        isFirstRun: true,
-      });
-      render(<Subject {...{ experiment }} />);
-      expect(screen.getByTestId("experiment-is-first-run")).toHaveTextContent(
-        "True",
-      );
-    });
-    it("when not set", () => {
-      const { experiment } = mockExperimentQuery("demo-slug", {
-        isFirstRun: false,
-      });
-      render(<Subject {...{ experiment }} />);
-      expect(screen.getByTestId("experiment-is-first-run")).toHaveTextContent(
         "False",
       );
     });

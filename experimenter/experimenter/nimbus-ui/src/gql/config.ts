@@ -73,14 +73,17 @@ export const GET_CONFIG_QUERY = gql`
       locales {
         id
         name
+        code
       }
       countries {
         id
         name
+        code
       }
       languages {
         id
         name
+        code
       }
       projects {
         id
@@ -94,6 +97,15 @@ export const GET_CONFIG_QUERY = gql`
         all
         experiments
         rollouts
+      }
+      populationSizingData
+      takeaways {
+        label
+        value
+      }
+      qaStatus {
+        label
+        value
       }
     }
   }

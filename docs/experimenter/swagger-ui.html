@@ -3553,6 +3553,24 @@
               ]
             }
           },
+          "takeaways": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ]
+            }
+          },
           "types": {
             "type": "array",
             "items": {
@@ -3570,6 +3588,27 @@
                 "value"
               ]
             }
+          },
+          "qaStatus": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label",
+                "value"
+              ]
+            }
+          },
+          "populationSizingData": {
+            "type": "string"
           },
           "hypothesisDefault": {
             "type": "string"
@@ -3593,7 +3632,10 @@
           "owners",
           "targetingConfigs",
           "conclusionRecommendations",
-          "types"
+          "takeaways",
+          "types",
+          "qaStatus",
+          "populationSizingData"
         ]
       },
       "NimbusExperiment": {
@@ -3639,7 +3681,10 @@
               "release",
               "esr",
               "testflight",
-              "aurora"
+              "aurora",
+              "developer",
+              "staging",
+              "production"
             ],
             "type": "string"
           },
@@ -3742,6 +3787,14 @@
           "localizations": {
             "type": "string",
             "readOnly": true
+          },
+          "locales": {
+            "type": "string",
+            "readOnly": true
+          },
+          "publishedDate": {
+            "type": "string",
+            "format": "date-time"
           }
         },
         "required": [
@@ -3750,7 +3803,8 @@
           "bucketConfig",
           "startDate",
           "enrollmentEndDate",
-          "endDate"
+          "endDate",
+          "publishedDate"
         ]
       },
       "ExperimentClone": {

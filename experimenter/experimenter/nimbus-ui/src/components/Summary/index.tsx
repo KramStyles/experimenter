@@ -16,6 +16,8 @@ import RequestLiveUpdate from "src/components/Summary/RequestLiveUpdate";
 import TableAudience from "src/components/Summary/TableAudience";
 import TableBranches from "src/components/Summary/TableBranches";
 import TableOverview from "src/components/Summary/TableOverview";
+import TableQA from "src/components/Summary/TableQA";
+import useQA from "src/components/Summary/TableQA/useQA";
 import TableRiskMitigation from "src/components/Summary/TableRiskMitigation";
 import { useChangeOperationMutation } from "src/hooks";
 import { CHANGELOG_MESSAGES } from "src/lib/constants";
@@ -34,7 +36,11 @@ type SummaryProps = {
 
 const Summary = ({ experiment, refetch }: SummaryProps) => {
   const takeawaysProps = useTakeaways(experiment, refetch);
+  const qaProps = useQA(experiment, refetch);
   const status = getStatus(experiment);
+  const shouldDisableUpdateButton =
+    !status.dirty || status.review || status.approved || status.waiting;
+
   const {
     isLoading,
     submitError,
@@ -51,13 +57,14 @@ const Summary = ({ experiment, refetch }: SummaryProps) => {
       publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
       status: NimbusExperimentStatusEnum.LIVE,
       statusNext: NimbusExperimentStatusEnum.COMPLETE,
+      isEnrollmentPaused: true,
       changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END,
     },
     {
       publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
       status: NimbusExperimentStatusEnum.LIVE,
       statusNext: NimbusExperimentStatusEnum.LIVE,
-      isEnrollmentPaused: true,
+      isEnrollmentPaused: experiment.isWeb ? false : true,
       changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END_ENROLLMENT,
     },
     {
@@ -67,7 +74,10 @@ const Summary = ({ experiment, refetch }: SummaryProps) => {
         experiment.status === NimbusExperimentStatusEnum.LIVE
           ? NimbusExperimentStatusEnum.LIVE
           : null,
-      isEnrollmentPaused: false,
+      isEnrollmentPaused:
+        experiment.statusNext === NimbusExperimentStatusEnum.COMPLETE
+          ? experiment.isEnrollmentPaused
+          : false,
     },
     {
       publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
@@ -89,9 +99,13 @@ const Summary = ({ experiment, refetch }: SummaryProps) => {
         <Card className="border-left-0 border-right-0 border-bottom-0">
           <Card.Header as="h5">Actions</Card.Header>
           <Card.Body>
-            {status.dirty && (
+            {experiment.isRollout && status.live && (
               <RequestLiveUpdate
-                {...{ isLoading, onSubmit: onRequestUpdateClicked }}
+                {...{
+                  isLoading,
+                  onSubmit: onRequestUpdateClicked,
+                  disable: shouldDisableUpdateButton,
+                }}
               />
             )}
 
@@ -162,6 +176,7 @@ const Summary = ({ experiment, refetch }: SummaryProps) => {
 
       {/* Branches title is inside its table */}
       <TableBranches {...{ experiment }} />
+      <TableQA {...qaProps} />
     </div>
   );
 };

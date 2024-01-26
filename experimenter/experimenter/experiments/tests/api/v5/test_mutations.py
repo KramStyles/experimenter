@@ -1,7 +1,7 @@
 import datetime
 import json
+from unittest import mock
 
-import mock
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
@@ -15,11 +15,17 @@ from experimenter.base.tests.factories import (
     LocaleFactory,
 )
 from experimenter.experiments.constants import NimbusConstants
-from experimenter.experiments.models import NimbusExperiment, NimbusFeatureConfig
+from experimenter.experiments.models import (
+    NimbusExperiment,
+    NimbusExperimentBranchThroughExcluded,
+    NimbusExperimentBranchThroughRequired,
+    NimbusFeatureConfig,
+)
 from experimenter.experiments.tests.factories import (
     TINY_PNG,
     NimbusExperimentFactory,
     NimbusFeatureConfigFactory,
+    NimbusVersionedSchemaFactory,
 )
 from experimenter.outcomes import Outcomes
 from experimenter.outcomes.tests import mock_valid_outcomes
@@ -319,7 +325,8 @@ class TestUpdateExperimentMutationSingleFeature(
     def test_update_mobile_experiment_branches_with_feature_config(self):
         user_email = "user@example.com"
         feature = NimbusFeatureConfigFactory(
-            schema="{}", application=NimbusExperiment.Application.FENIX
+            application=NimbusExperiment.Application.FENIX,
+            schemas=[NimbusVersionedSchemaFactory.build(schema="{}", version=None)],
         )
         experiment = NimbusExperimentFactory.create(
             status=NimbusExperiment.Status.DRAFT,
@@ -331,14 +338,19 @@ class TestUpdateExperimentMutationSingleFeature(
             "name": "control",
             "description": "a control",
             "ratio": 1,
-            "featureValue": "",
+            "featureValues": [],
         }
         treatment_branches_data = [
             {
                 "name": "treatment1",
                 "description": "desc1",
                 "ratio": 1,
-                "featureValue": '{"key": "value"}',
+                "featureValues": [
+                    {
+                        "featureConfig": "1",
+                        "value": '{"key": "value"}',
+                    }
+                ],
             }
         ]
         response = self.query(
@@ -346,7 +358,7 @@ class TestUpdateExperimentMutationSingleFeature(
             variables={
                 "input": {
                     "id": experiment.id,
-                    "featureConfigId": feature.id,
+                    "featureConfigIds": [feature.id],
                     "referenceBranch": reference_branch_data,
                     "treatmentBranches": treatment_branches_data,
                     "changelogMessage": "test changelog message",
@@ -360,12 +372,12 @@ class TestUpdateExperimentMutationSingleFeature(
         self.assertEqual(experiment.feature_configs.get(), feature)
         self.assertEqual(experiment.branches.count(), 2)
         self.assertEqual(experiment.reference_branch.name, reference_branch_data["name"])
-        self.assertEqual(experiment.reference_branch.feature_values.get().value, "")
+        self.assertEqual(experiment.reference_branch.feature_values.count(), 0)
         treatment_branch = experiment.treatment_branches[0]
         self.assertEqual(treatment_branch.name, treatment_branches_data[0]["name"])
         self.assertEqual(
             treatment_branch.feature_values.get().value,
-            treatment_branches_data[0]["featureValue"],
+            treatment_branches_data[0]["featureValues"][0]["value"],
         )
 
     def test_update_experiment_warn_feature_schema(self):
@@ -532,14 +544,19 @@ class TestUpdateExperimentMutationSingleFeature(
             "name": "control",
             "description": "a control",
             "ratio": 1,
-            "featureValue": "",
+            "featureValues": [],
         }
         treatment_branches_data = [
             {
                 "name": "treatment1",
                 "description": "desc1",
                 "ratio": 1,
-                "featureValue": '{"key": "value"}',
+                "featureValues": [
+                    {
+                        "featureConfig": "1",
+                        "value": '{"key": "value"}',
+                    }
+                ],
             }
         ]
         response = self.query(
@@ -547,7 +564,7 @@ class TestUpdateExperimentMutationSingleFeature(
             variables={
                 "input": {
                     "id": experiment.id,
-                    "featureConfigId": None,
+                    "featureConfigIds": [],
                     "referenceBranch": reference_branch_data,
                     "treatmentBranches": treatment_branches_data,
                     "changelogMessage": "test changelog message",
@@ -562,17 +579,17 @@ class TestUpdateExperimentMutationSingleFeature(
         self.assertEqual(experiment.branches.count(), 2)
 
         self.assertEqual(experiment.reference_branch.name, reference_branch_data["name"])
-        self.assertEqual(
-            experiment.reference_branch.feature_values.get().feature_config, None
-        )
-        self.assertEqual(experiment.reference_branch.feature_values.get().value, "")
+        self.assertEqual(experiment.reference_branch.feature_values.count(), 0)
 
         treatment_branch = experiment.treatment_branches[0]
         self.assertEqual(treatment_branch.name, treatment_branches_data[0]["name"])
-        self.assertEqual(treatment_branch.feature_values.get().feature_config, None)
+        self.assertEqual(
+            treatment_branch.feature_values.get().feature_config,
+            NimbusFeatureConfig.objects.get(pk=1),
+        )
         self.assertEqual(
             treatment_branch.feature_values.get().value,
-            treatment_branches_data[0]["featureValue"],
+            treatment_branches_data[0]["featureValues"][0]["value"],
         )
 
     def test_update_experiment_branches_with_feature_config_error(self):
@@ -588,7 +605,7 @@ class TestUpdateExperimentMutationSingleFeature(
             variables={
                 "input": {
                     "id": experiment.id,
-                    "featureConfigId": invalid_feature_config_id,
+                    "featureConfigIds": [invalid_feature_config_id],
                     "referenceBranch": reference_branch,
                     "treatmentBranches": treatment_branches,
                     "changelogMessage": "test changelog message",
@@ -603,7 +620,7 @@ class TestUpdateExperimentMutationSingleFeature(
         self.assertEqual(
             result["message"],
             {
-                "feature_config": [
+                "feature_configs": [
                     f'Invalid pk "{invalid_feature_config_id}" - object does not exist.'
                 ]
             },
@@ -612,7 +629,8 @@ class TestUpdateExperimentMutationSingleFeature(
     def test_update_experiment_branches_with_screenshots(self):
         user_email = "user@example.com"
         feature = NimbusFeatureConfigFactory(
-            schema="{}", application=NimbusExperiment.Application.FENIX
+            application=NimbusExperiment.Application.FENIX,
+            schemas=[NimbusVersionedSchemaFactory.build(schema="{}", version=None)],
         )
         experiment = NimbusExperimentFactory.create(
             status=NimbusExperiment.Status.DRAFT,
@@ -648,7 +666,7 @@ class TestUpdateExperimentMutationSingleFeature(
             variables={
                 "input": {
                     "id": experiment.id,
-                    "featureConfigId": feature.id,
+                    "featureConfigIds": [feature.id],
                     "referenceBranch": reference_branch,
                     "treatmentBranches": treatment_branches,
                     "changelogMessage": "test changelog message",
@@ -1125,7 +1143,7 @@ class TestUpdateExperimentMutationSingleFeature(
         self.assertEqual(result["message"], "success")
 
         experiment = NimbusExperiment.objects.get(id=experiment.id)
-        self.assertEquals(experiment.proposed_release_date, datetime.date(2023, 12, 12))
+        self.assertEqual(experiment.proposed_release_date, datetime.date(2023, 12, 12))
 
     def test_update_conclusion_recommendation_null(self):
         user_email = "user@example.com"
@@ -1158,7 +1176,12 @@ class TestUpdateExperimentMutationSingleFeature(
         user_email = "user@example.com"
         feature = NimbusFeatureConfigFactory.create(
             application=NimbusExperiment.Application.DESKTOP,
-            sets_prefs=["foo.bar.baz"],
+            schemas=[
+                NimbusVersionedSchemaFactory.build(
+                    version=None,
+                    sets_prefs=["foo.bar.baz"],
+                ),
+            ],
         )
         experiment = NimbusExperimentFactory.create(
             status=NimbusExperiment.Status.DRAFT,
@@ -1184,6 +1207,88 @@ class TestUpdateExperimentMutationSingleFeature(
 
         self.assertEqual(experiment.prevent_pref_conflicts, True)
 
+    def test_update_required_excluded_experiments_without_branches(self):
+        user_email = "user@example.com"
+        required = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+        excluded = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+        experiment = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+
+        response = self.query(
+            UPDATE_EXPERIMENT_MUTATION,
+            variables={
+                "input": {
+                    "id": experiment.id,
+                    "requiredExperimentsBranches": [
+                        {"requiredExperiment": required.id, "branchSlug": None}
+                    ],
+                    "excludedExperimentsBranches": [
+                        {"excludedExperiment": excluded.id, "branchSlug": None}
+                    ],
+                    "changelogMessage": "test changelog message",
+                }
+            },
+            headers={settings.OPENIDC_EMAIL_HEADER: user_email},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        NimbusExperimentBranchThroughRequired.objects.filter(
+            parent_experiment=experiment, child_experiment=required, branch_slug=None
+        ).get()
+        NimbusExperimentBranchThroughExcluded.objects.filter(
+            parent_experiment=experiment, child_experiment=excluded, branch_slug=None
+        ).get()
+
+    def test_update_required_excluded_experiments_with_branches(self):
+        user_email = "user@example.com"
+        required = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+        excluded = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+        experiment = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.CREATED,
+        )
+
+        response = self.query(
+            UPDATE_EXPERIMENT_MUTATION,
+            variables={
+                "input": {
+                    "id": experiment.id,
+                    "requiredExperimentsBranches": [
+                        {
+                            "requiredExperiment": required.id,
+                            "branchSlug": required.reference_branch.slug,
+                        }
+                    ],
+                    "excludedExperimentsBranches": [
+                        {
+                            "excludedExperiment": excluded.id,
+                            "branchSlug": excluded.reference_branch.slug,
+                        }
+                    ],
+                    "changelogMessage": "test changelog message",
+                }
+            },
+            headers={settings.OPENIDC_EMAIL_HEADER: user_email},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        NimbusExperimentBranchThroughRequired.objects.filter(
+            parent_experiment=experiment,
+            child_experiment=required,
+            branch_slug=required.reference_branch.slug,
+        ).get()
+        NimbusExperimentBranchThroughExcluded.objects.filter(
+            parent_experiment=experiment,
+            child_experiment=excluded,
+            branch_slug=excluded.reference_branch.slug,
+        ).get()
+
 
 @mock_valid_outcomes
 class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
@@ -1192,11 +1297,13 @@ class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
 
     def test_update_experiment_branches_with_feature_configs(self):
         user_email = "user@example.com"
-        feature1 = NimbusFeatureConfigFactory(
-            schema="{}", application=NimbusExperiment.Application.FENIX
+        feature1 = NimbusFeatureConfigFactory.create(
+            application=NimbusExperiment.Application.FENIX,
+            schemas=[NimbusVersionedSchemaFactory.build(schema="{}", version=None)],
         )
-        feature2 = NimbusFeatureConfigFactory(
-            schema="{}", application=NimbusExperiment.Application.FENIX
+        feature2 = NimbusFeatureConfigFactory.create(
+            application=NimbusExperiment.Application.FENIX,
+            schemas=[NimbusVersionedSchemaFactory.build(schema="{}", version=None)],
         )
         experiment = NimbusExperimentFactory.create(
             status=NimbusExperiment.Status.DRAFT,
@@ -1209,8 +1316,8 @@ class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
             "description": "a control",
             "ratio": 1,
             "featureValues": [
-                {"featureConfig": feature1.id, "value": ""},
-                {"featureConfig": feature2.id, "value": ""},
+                {"featureConfig": str(feature1.id), "value": ""},
+                {"featureConfig": str(feature2.id), "value": ""},
             ],
         }
         treatment_branches_data = [
@@ -1220,11 +1327,11 @@ class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
                 "ratio": 1,
                 "featureValues": [
                     {
-                        "featureConfig": feature1.id,
+                        "featureConfig": str(feature1.id),
                         "value": "{'key': 'value'}",
                     },
                     {
-                        "featureConfig": feature2.id,
+                        "featureConfig": str(feature2.id),
                         "value": "{'key': 'value'}",
                     },
                 ],
@@ -1301,7 +1408,7 @@ class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
             variables={
                 "input": {
                     "id": experiment.id,
-                    "featureConfigId": None,
+                    "featureConfigIds": [],
                     "referenceBranch": reference_branch_data,
                     "treatmentBranches": treatment_branches_data,
                     "changelogMessage": "test changelog message",
@@ -1362,6 +1469,66 @@ class TestUpdateExperimentMutationMultiFeature(GraphQLTestCase):
                 ]
             },
         )
+
+    def test_update_proposed_release_date(self):
+        user_email = "user@example.com"
+        experiment = NimbusExperimentFactory.create(
+            status=NimbusExperiment.Status.DRAFT,
+            slug="old slug",
+            name="old name",
+            hypothesis="old hypothesis",
+            public_description="old public description",
+            is_first_run=True,
+        )
+        response = self.query(
+            UPDATE_EXPERIMENT_MUTATION,
+            variables={
+                "input": {
+                    "id": experiment.id,
+                    "name": "new name",
+                    "hypothesis": "new hypothesis",
+                    "publicDescription": "new public description",
+                    "changelogMessage": "test changelog message",
+                    "proposedReleaseDate": "2023-12-12",
+                }
+            },
+            headers={settings.OPENIDC_EMAIL_HEADER: user_email},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        content = json.loads(response.content)
+        result = content["data"]["updateExperiment"]
+        self.assertEqual(result["message"], "success")
+
+        experiment = NimbusExperiment.objects.get()
+        self.assertEqual(experiment.is_first_run, True)
+        self.assertEqual(experiment.proposed_release_date, datetime.date(2023, 12, 12))
+
+    def test_update_qa_status(self):
+        user_email = "user@example.com"
+        experiment = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE_APPROVE,
+            qa_status=NimbusExperiment.QAStatus.NOT_SET,
+        )
+
+        new_status = NimbusExperiment.QAStatus.YELLOW
+        response = self.query(
+            UPDATE_EXPERIMENT_MUTATION,
+            variables={
+                "input": {
+                    "id": experiment.id,
+                    "qaStatus": new_status,
+                    "changelogMessage": "test changelog message",
+                }
+            },
+            headers={settings.OPENIDC_EMAIL_HEADER: user_email},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        content = json.loads(response.content)
+        result = content["data"]["updateExperiment"]
+        self.assertEqual(result["message"], "success")
+
+        experiment = NimbusExperiment.objects.get()
+        self.assertEqual(experiment.qa_status, new_status)
 
 
 @mock_valid_outcomes

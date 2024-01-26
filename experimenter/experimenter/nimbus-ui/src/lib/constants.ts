@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { RegisterOptions } from "react-hook-form";
+import { NimbusExperimentQAStatusEnum } from "src/types/globalTypes";
 
 export const BASE_PATH = "/nimbus";
 
@@ -14,6 +15,8 @@ export const SUBMIT_ERROR =
 export const CONTROL_BRANCH_REQUIRED_ERROR = "Control branch is required";
 
 export const SAVE_FAILED_NO_ERROR = "Save failed, no error available";
+
+export const SAVE_FAILED_QA_STATUS = "Failed to save qa status.";
 
 export const CONFIG_EMPTY_ERROR = "Configuration is empty";
 
@@ -27,7 +30,8 @@ export const SERVER_ERRORS = {
   NULL_FIELD: "This field may not be null.",
   EMPTY_LIST: "This list may not be empty.",
   BLANK_DESCRIPTION: "Description may not be blank.",
-  FEATURE_CONFIG: "You must select a feature configuration from the drop down.",
+  FEATURE_CONFIGS:
+    "You must select a feature configuration from the drop down.",
 };
 
 export const EXTERNAL_URLS = {
@@ -35,7 +39,7 @@ export const EXTERNAL_URLS = {
     "https://mana.mozilla.org/wiki/display/FJT/Nimbus+Onboarding",
   NIMBUS_MANA_DOC: "https://mana.mozilla.org/wiki/display/FJT/Nimbus",
   WORKFLOW_MANA_DOC:
-    "https://mana.mozilla.org/wiki/pages/viewpage.action?pageId=109990007",
+    "https://experimenter.info/data-scientists/#sample-size-recommendations",
   BRANCHES_GOOGLE_DOC:
     "https://docs.google.com/document/d/155EUgzn22VTX8mFwesSROT3Z6JORSfb5VyoMoLra7ws/edit#heading=h.i8g4ppfvkq0x",
   METRICS_GOOGLE_DOC:
@@ -65,9 +69,10 @@ export const EXTERNAL_URLS = {
   LAUNCH_DOCUMENTATION:
     "https://experimenter.info/access#onboarding-for-new-reviewers-l3",
   BUCKET_WARNING_EXPLANATION:
-    "https://experimenter.info/faq/Rollouts-and-experiments#question-2",
+    "https://experimenter.info/rollouts/rollouts-bucketing-warning",
   CUSTOM_AUDIENCES_EXPLANATION:
-    "https://experimenter.info/workflow/custom-audiences",
+    "https://experimenter.info/workflow/implementing/custom-audiences",
+  WHAT_TRAIN_IS_IT: "https://whattrainisitnow.com",
 };
 
 export const RISK_QUESTIONS = {
@@ -81,6 +86,11 @@ export const RISK_QUESTIONS = {
 
 export const TOOLTIP_DURATION =
   "This is the total duration of the experiment, including the enrollment period.";
+export const TOOLTIP_DISABLED = "Enrollment Period is disabled on rollouts";
+export const TOOLTIP_DISABLED_FOR_WEBAPP =
+  "This field is not applicable for web based application";
+export const TOOLTIP_RELEASE_DATE =
+  "This is the approximate release date of the version that is being targeted. Click here to find your date!";
 
 export const LIFECYCLE_REVIEW_FLOWS = {
   LAUNCH: {
@@ -135,6 +145,7 @@ export const CHANGELOG_MESSAGES = {
   ARCHIVING_EXPERIMENT: "Archiving experiment",
   UNARCHIVING_EXPERIMENT: "Unarchiving experiment",
   UPDATED_TAKEAWAYS: "Updated Takeaways",
+  UPDATED_QA_STATUS: "Updated QA Status",
   CANCEL_REVIEW: "Cancelled Review Request",
 } as const;
 
@@ -162,13 +173,11 @@ export const POSITIVE_NUMBER_FIELD = {
 } as RegisterOptions;
 
 export const POSITIVE_NUMBER_WITH_COMMAS_FIELD = {
-  setValueAs: (value) =>
-    !/[a-zA-Z]/.test("" + value)
-      ? parseFloat(("" + value).trim().replace(/[^\d.-]+/g, ""))
-      : FIELD_MESSAGES.POSITIVE_NUMBER,
+  setValueAs: (value?: string) =>
+    parseFloat(value?.trim().replace(/[^\d.-]+/g, "") ?? ""),
 
-  validate: (value) =>
-    (!isNaN(value) && value >= 0) || FIELD_MESSAGES.POSITIVE_NUMBER,
+  validate: (value?: string) =>
+    /^[0-9, ]*$/.test(value ?? "") || FIELD_MESSAGES.POSITIVE_NUMBER,
 } as RegisterOptions;
 
 export const URL_FIELD = {
@@ -181,3 +190,35 @@ export const URL_FIELD = {
 export const IMAGE_UPLOAD_ACCEPT = ".gif,.jpg,.jpeg,.png";
 
 export const POLL_INTERVAL = 30000;
+
+interface QAStatusProperties {
+  emoji: string;
+  description: string;
+  className: string;
+}
+
+export const QA_STATUS_PROPERTIES: Record<
+  NimbusExperimentQAStatusEnum,
+  QAStatusProperties
+> = {
+  [NimbusExperimentQAStatusEnum.GREEN]: {
+    emoji: "✅",
+    description: "✅ QA: Green",
+    className: "success",
+  },
+  [NimbusExperimentQAStatusEnum.YELLOW]: {
+    emoji: "⚠️",
+    description: "⚠️ QA: Yellow",
+    className: "text-dark",
+  },
+  [NimbusExperimentQAStatusEnum.RED]: {
+    emoji: "❌",
+    description: "❌ QA: Red",
+    className: "danger",
+  },
+  [NimbusExperimentQAStatusEnum.NOT_SET]: {
+    emoji: "",
+    description: "Not set",
+    className: "",
+  },
+};

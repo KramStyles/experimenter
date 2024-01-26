@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from nimbus.models.base_dataclass import BaseExperimentApplications
 from nimbus.pages.browser import Browser
 from nimbus.utils import helpers
 
@@ -14,44 +15,15 @@ def targeting_config_slug(request):
 @pytest.mark.run_targeting
 def test_check_advanced_targeting(
     selenium,
-    slugify,
-    experiment_name,
     targeting_config_slug,
+    experiment_slug,
+    default_data_api,
 ):
-    targeting = helpers.load_targeting_configs()[1]
-    experiment_slug = str(slugify(experiment_name))
-    data = {
-        "hypothesis": "Test Hypothesis",
-        "application": "DESKTOP",
-        "changelogMessage": "test updates",
-        "targetingConfigSlug": targeting,
-        "publicDescription": "Some sort of Fancy Words",
-        "riskRevenue": False,
-        "riskPartnerRelated": False,
-        "riskBrand": False,
-        "featureConfigId": 1,
-        "referenceBranch": {
-            "description": "reference branch",
-            "name": "Branch 1",
-            "ratio": 50,
-            "featureValue": "{}",
-        },
-        "treatmentBranches": [
-            {
-                "description": "treatment branch",
-                "name": "Branch 2",
-                "ratio": 50,
-                "featureValue": "",
-            }
-        ],
-        "populationPercent": "100",
-        "totalEnrolledClients": 55,
-    }
-    helpers.create_desktop_experiment(
+    helpers.create_experiment(
         experiment_slug,
-        "desktop",
-        targeting_config_slug,
-        data,
+        BaseExperimentApplications.FIREFOX_DESKTOP.value,
+        default_data_api,
+        targeting=targeting_config_slug,
     )
     experiment_data = helpers.load_experiment_data(experiment_slug)
     targeting = experiment_data["data"]["experimentBySlug"]["jexlTargetingExpression"]
@@ -94,18 +66,16 @@ def test_check_advanced_targeting(
 @pytest.mark.run_targeting
 def test_check_audience_targeting(
     selenium,
-    slugify,
-    experiment_name,
     audience_field,
-    experiment_default_data,
+    experiment_slug,
+    default_data_api,
 ):
-    experiment_slug = str(slugify(experiment_name))
-    experiment_default_data.update(audience_field)
-    helpers.create_desktop_experiment(
+    default_data_api.update(audience_field)
+    helpers.create_experiment(
         experiment_slug,
-        "desktop",
-        "no_targeting",
-        experiment_default_data,
+        BaseExperimentApplications.FIREFOX_DESKTOP.value,
+        default_data_api,
+        targeting="no_targeting",
     )
     experiment_data = helpers.load_experiment_data(experiment_slug)
     targeting = experiment_data["data"]["experimentBySlug"]["jexlTargetingExpression"]

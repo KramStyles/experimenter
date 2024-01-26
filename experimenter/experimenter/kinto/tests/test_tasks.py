@@ -1,8 +1,10 @@
-import mock
+from unittest import mock
+
 from django.conf import settings
 from django.core import mail
 from django.test import TestCase
 from django.test.utils import override_settings
+from django.utils import timezone
 from parameterized import parameterized
 
 from experimenter.experiments.api.v6.serializers import NimbusExperimentSerializer
@@ -31,6 +33,7 @@ class TestNimbusCheckKintoPushQueue(MockKintoClientMixin, TestCase):
         for collection in (
             settings.KINTO_COLLECTION_NIMBUS_DESKTOP,
             settings.KINTO_COLLECTION_NIMBUS_MOBILE,
+            settings.KINTO_COLLECTION_NIMBUS_WEB,
         ):
             self.mock_dispatchee_task.assert_any_call(collection)
 
@@ -185,6 +188,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         pending_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=timezone.now(),
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -211,6 +215,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         self.assertEqual(
             pending_experiment.publish_status, NimbusExperiment.PublishStatus.REVIEW
         )
+        self.assertIsNone(pending_experiment.published_date)
         self.assertTrue(
             pending_experiment.changes.filter(
                 old_status=NimbusExperiment.Status.DRAFT,
@@ -224,9 +229,11 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
     def test_check_with_timeout_update_review_and_queued_launch_rolls_back_and_pushes(
         self,
     ):
+        expected_published_date = timezone.now()
         pending_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.PAUSING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=expected_published_date,
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -253,6 +260,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         self.assertEqual(
             pending_experiment.publish_status, NimbusExperiment.PublishStatus.REVIEW
         )
+        self.assertEqual(pending_experiment.published_date, expected_published_date)
         self.assertTrue(
             pending_experiment.changes.filter(
                 old_status=NimbusExperiment.Status.LIVE,
@@ -266,9 +274,11 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
     def test_check_with_timeout_end_review_and_queued_launch_rolls_back_and_pushes(
         self,
     ):
+        expected_published_date = timezone.now()
         pending_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.ENDING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=expected_published_date,
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -295,6 +305,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         self.assertEqual(
             pending_experiment.publish_status, NimbusExperiment.PublishStatus.REVIEW
         )
+        self.assertEqual(pending_experiment.published_date, expected_published_date)
         self.assertTrue(
             pending_experiment.changes.filter(
                 old_status=NimbusExperiment.Status.LIVE,
@@ -308,6 +319,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         rejected_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=timezone.now(),
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -336,6 +348,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
             rejected_experiment.publish_status, NimbusExperiment.PublishStatus.IDLE
         )
         self.assertIsNone(rejected_experiment.status_next)
+        self.assertIsNone(rejected_experiment.published_date)
 
         self.assertTrue(
             rejected_experiment.changes.filter(
@@ -348,9 +361,11 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
 
     def test_check_with_rejected_update_rolls_back_and_pushes(self):
+        expected_published_date = timezone.now()
         rejected_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.PAUSING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=expected_published_date,
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -380,6 +395,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
         self.assertIsNone(rejected_experiment.status_next)
         self.assertFalse(rejected_experiment.is_paused)
+        self.assertEqual(rejected_experiment.published_date, expected_published_date)
 
         self.assertTrue(
             rejected_experiment.changes.filter(
@@ -392,11 +408,13 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
 
     def test_check_with_rejected_update_live_rollout_rolls_back_and_pushes(self):
+        expected_published_date = timezone.now()
         rejected_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LIVE_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
             is_rollout=True,
             is_rollout_dirty=True,
+            published_date=expected_published_date,
         )
         self.setup_kinto_get_main_records([])
         self.setup_kinto_rejected_review()
@@ -419,6 +437,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         self.assertTrue(rejected_experiment.is_rollout_dirty)
         self.assertIsNone(rejected_experiment.status_next)
         self.assertFalse(rejected_experiment.is_paused)
+        self.assertEqual(rejected_experiment.published_date, expected_published_date)
 
         self.assertTrue(
             rejected_experiment.changes.filter(
@@ -431,9 +450,11 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
 
     def test_check_with_rejected_end_rolls_back_and_pushes(self):
+        expected_published_date = timezone.now()
         rejected_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.ENDING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=expected_published_date,
         )
         launching_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -462,6 +483,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
             rejected_experiment.publish_status, NimbusExperiment.PublishStatus.IDLE
         )
         self.assertEqual(rejected_experiment.status_next, None)
+        self.assertEqual(rejected_experiment.published_date, expected_published_date)
 
         self.assertTrue(
             rejected_experiment.changes.filter(
@@ -474,10 +496,12 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
 
     def test_check_with_rollout_rejected_end_rolls_back_and_pushes(self):
+        expected_published_date = timezone.now()
         rejected_rollout = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.ENDING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
             is_rollout=True,
+            published_date=expected_published_date,
         )
         launching_rollout = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -507,6 +531,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
             rejected_rollout.publish_status, NimbusExperiment.PublishStatus.IDLE
         )
         self.assertEqual(rejected_rollout.status_next, None)
+        self.assertEqual(rejected_rollout.published_date, expected_published_date)
 
         self.assertTrue(
             rejected_rollout.changes.filter(
@@ -519,11 +544,13 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
 
     def test_check_with_dirty_rollout_rejected_end_rolls_back_and_pushes(self):
+        expected_published_date = timezone.now()
         rejected_rollout = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LIVE_DIRTY_ENDING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
             is_rollout=True,
             is_rollout_dirty=True,
+            published_date=expected_published_date,
         )
         launching_rollout = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
@@ -557,6 +584,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         )
         self.assertEqual(rejected_rollout.status_next, None)
         self.assertTrue(rejected_rollout.is_rollout_dirty)
+        self.assertEqual(rejected_rollout.published_date, expected_published_date)
 
         self.assertTrue(
             rejected_rollout.changes.filter(
@@ -568,7 +596,9 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
             ).exists()
         )
 
-    def test_check_with_approved_update_sets_experiment_to_idle_saves_published_dto(self):
+    def test_check_with_approved_update_sets_experiment_to_idle_saves_published_dto(
+        self,
+    ):
         updated_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.PAUSING_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
@@ -652,10 +682,13 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
             bucket="main-workspace",
         )
 
-    def test_check_waiting_experiment_with_signed_collection_becomes_rejection(self):
+    def test_check_waiting_launching_experiment_with_signed_collection_becomes_rejection(
+        self,
+    ):
         waiting_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE_WAITING,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=timezone.now(),
         )
 
         self.setup_kinto_get_main_records([])
@@ -671,6 +704,7 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
         self.assertEqual(
             waiting_experiment.publish_status, NimbusExperiment.PublishStatus.IDLE
         )
+        self.assertIsNone(waiting_experiment.published_date)
         self.assertTrue(
             waiting_experiment.changes.filter(
                 changed_by__email=settings.KINTO_DEFAULT_CHANGELOG_USER,
@@ -764,22 +798,23 @@ class TestNimbusCheckKintoPushQueueByCollection(MockKintoClientMixin, TestCase):
 
 
 class TestNimbusPushExperimentToKintoTask(MockKintoClientMixin, TestCase):
-    def test_push_experiment_to_kinto_sends_desktop_experiment_data_and_sets_accepted(
+    def test_push_experiment_to_kinto(
         self,
     ):
+        """Push desktop experiment to Kinto and validate its outgoing publish status,
+        published_date, and changelogs"""
         experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=None,
         )
 
         tasks.nimbus_push_experiment_to_kinto(
             settings.KINTO_COLLECTION_NIMBUS_DESKTOP, experiment.id
         )
 
-        data = NimbusExperimentSerializer(experiment).data
-
         self.mock_kinto_client.create_record.assert_called_with(
-            data=data,
+            data=mock.ANY,
             collection=settings.KINTO_COLLECTION_NIMBUS_DESKTOP,
             bucket=settings.KINTO_BUCKET_WORKSPACE,
             if_not_exists=True,
@@ -796,6 +831,40 @@ class TestNimbusPushExperimentToKintoTask(MockKintoClientMixin, TestCase):
                 message=NimbusChangeLog.Messages.LAUNCHING_TO_KINTO,
             ).exists()
         )
+        self.assertIsNotNone(experiment.published_date)
+
+    def test_push_experiment_to_kinto_overwrites_existing_published_date_for_draft(self):
+        existing_published_date = timezone.now()
+        experiment = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE,
+            application=NimbusExperiment.Application.DESKTOP,
+            published_date=existing_published_date,
+        )
+
+        tasks.nimbus_push_experiment_to_kinto(
+            settings.KINTO_COLLECTION_NIMBUS_DESKTOP, experiment.id
+        )
+
+        self.mock_kinto_client.create_record.assert_called_with(
+            data=mock.ANY,
+            collection=settings.KINTO_COLLECTION_NIMBUS_DESKTOP,
+            bucket=settings.KINTO_BUCKET_WORKSPACE,
+            if_not_exists=True,
+        )
+
+        experiment = NimbusExperiment.objects.get(id=experiment.id)
+        self.assertEqual(
+            experiment.publish_status, NimbusExperiment.PublishStatus.WAITING
+        )
+        self.assertTrue(
+            experiment.changes.filter(
+                old_publish_status=NimbusExperiment.PublishStatus.APPROVED,
+                new_publish_status=NimbusExperiment.PublishStatus.WAITING,
+                message=NimbusChangeLog.Messages.LAUNCHING_TO_KINTO,
+            ).exists()
+        )
+        self.assertIsNotNone(experiment.published_date)
+        self.assertNotEqual(experiment.published_date, existing_published_date)
 
     def test_push_experiment_to_kinto_reraises_exception(self):
         experiment = NimbusExperimentFactory.create(
@@ -810,9 +879,11 @@ class TestNimbusPushExperimentToKintoTask(MockKintoClientMixin, TestCase):
 
 class TestNimbusUpdateExperimentInKinto(MockKintoClientMixin, TestCase):
     def test_updates_experiment_record_in_kinto(self):
+        existing_published_date = timezone.now()
         experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.PAUSING_APPROVE,
             application=NimbusExperiment.Application.DESKTOP,
+            published_date=existing_published_date,
         )
 
         tasks.nimbus_update_experiment_in_kinto(
@@ -846,6 +917,7 @@ class TestNimbusUpdateExperimentInKinto(MockKintoClientMixin, TestCase):
                 message=NimbusChangeLog.Messages.UPDATING_IN_KINTO,
             ).exists()
         )
+        self.assertEqual(experiment.published_date, existing_published_date)
 
     def test_push_experiment_to_kinto_reraises_exception(self):
         experiment = NimbusExperimentFactory.create_with_lifecycle(
@@ -906,7 +978,9 @@ class TestNimbusEndExperimentInKinto(MockKintoClientMixin, TestCase):
 
 
 class TestNimbusSynchronizePreviewExperimentsInKinto(MockKintoClientMixin, TestCase):
-    def test_publishes_preview_experiments_and_unpublishes_non_preview_experiments(self):
+    def test_publishes_preview_experiments_and_unpublishes_non_preview_experiments(
+        self,
+    ):
         should_publish_experiment = NimbusExperimentFactory.create_with_lifecycle(
             NimbusExperimentFactory.Lifecycles.PREVIEW,
         )
@@ -928,7 +1002,6 @@ class TestNimbusSynchronizePreviewExperimentsInKinto(MockKintoClientMixin, TestC
         should_unpublish_experiment = NimbusExperiment.objects.get(
             id=should_unpublish_experiment.id
         )
-        self.assertIsNone(should_unpublish_experiment.published_dto)
 
         self.mock_kinto_client.create_record.assert_called_with(
             data=data,
@@ -989,6 +1062,7 @@ class TestNimbusSendEmails(MockKintoClientMixin, TestCase):
             proposed_enrollment=0,
             proposed_duration=20,
             with_latest_change_now=True,
+            is_rollout=False,
         )
 
         tasks.nimbus_send_emails()
@@ -1000,6 +1074,27 @@ class TestNimbusSendEmails(MockKintoClientMixin, TestCase):
         )
         self.assertEqual(experiment.emails.count(), 1)
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_enrollment_ending_email_not_sent_for_rollouts_after_enrollment_end_date(
+        self,
+    ):
+        experiment = NimbusExperimentFactory.create_with_lifecycle(
+            NimbusExperimentFactory.Lifecycles.LAUNCH_APPROVE_APPROVE,
+            proposed_enrollment=0,
+            proposed_duration=20,
+            with_latest_change_now=True,
+            is_rollout=True,
+        )
+
+        tasks.nimbus_send_emails()
+
+        self.assertFalse(
+            experiment.emails.filter(
+                type=NimbusExperiment.EmailType.ENROLLMENT_END
+            ).exists()
+        )
+        self.assertEqual(experiment.emails.count(), 0)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_experiment_ending_email_not_sent_for_experiments_before_enrollment_end_date(
         self,

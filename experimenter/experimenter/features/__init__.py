@@ -1,22 +1,21 @@
 import json
-import os
-from enum import Enum
-from typing import Literal, Optional, Union
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Optional, Union
 
 import yaml
 from django.conf import settings
 from django.core.checks import Error, register
-from pydantic import BaseModel, Field
+from mozilla_nimbus_schemas.experiments.feature_manifests import (
+    FeatureManifest,
+    FeatureVariableType,
+    FeatureWithExposure,
+    FeatureWithoutExposure,
+)
 
-from experimenter.experiments.constants import NimbusConstants
-
-
-class FeatureVariableType(Enum):
-    INT = "int"
-    STRING = "string"
-    BOOLEAN = "boolean"
-    JSON = "json"
-
+from experimenter.experiments.constants import ApplicationConfig, NimbusConstants
+from manifesttool.version import Version
 
 FEATURE_SCHEMA_TYPES = {
     FeatureVariableType.INT: "integer",
@@ -31,39 +30,25 @@ FEATURE_PYTHON_TYPES = {
 }
 
 
-class FeatureVariable(BaseModel):
-    description: Optional[str]
-    enum: Optional[list[str]]
-    fallbackPref: Optional[str]
-    type: Optional[FeatureVariableType]
-    setPref: Optional[str]
-
-
-class FeatureSchema(BaseModel):
-    uri: Optional[str]
-    path: Optional[str]
-
-
-class Feature(BaseModel):
-    applicationSlug: str
-    description: Optional[str]
-    exposureDescription: Optional[Union[Literal[False], str]]
-    isEarlyStartup: Optional[bool]
+@dataclass
+class Feature:
     slug: str
-    variables: Optional[dict[str, FeatureVariable]]
-    schema_paths: Optional[FeatureSchema] = Field(alias="schema")
+    application_slug: str
+    model: Union[FeatureWithExposure, FeatureWithoutExposure]
+    version: Optional[Version] = None
 
     def load_remote_jsonschema(self):
-        if self.schema_paths:
-            schema_path = os.path.join(
-                settings.FEATURE_SCHEMAS_PATH,
-                self.schema_paths.path,
+        if self.model.json_schema is not None:
+            schema_path = Path(
+                settings.FEATURE_MANIFESTS_PATH,
+                self.application_slug,
+                "schemas",
+                self.model.json_schema.path,
             )
 
-            with open(schema_path) as schema_file:
-                schema_data = schema_file.read()
+            with schema_path.open() as f:
                 try:
-                    return json.dumps(json.loads(schema_data), indent=2)
+                    return json.dumps(json.load(f), indent=2)
                 except json.JSONDecodeError:
                     return None
 
@@ -74,51 +59,76 @@ class Feature(BaseModel):
             "additionalProperties": False,
         }
 
-        if self.variables:
-            for variable_slug, variable in self.variables.items():
-                variable_schema = {
-                    "description": variable.description,
-                }
+        for variable_slug, variable in self.model.variables.items():
+            variable_schema = {
+                "description": variable.description,
+            }
 
-                if variable.type in FEATURE_SCHEMA_TYPES:
-                    variable_schema["type"] = FEATURE_SCHEMA_TYPES[variable.type]
+            if variable.type in FEATURE_SCHEMA_TYPES:
+                variable_schema["type"] = FEATURE_SCHEMA_TYPES[variable.type]
 
-                if variable.enum:
-                    python_type = FEATURE_PYTHON_TYPES[variable.type]
-                    variable_schema["enum"] = [python_type(e) for e in variable.enum]
+            if variable.enum:
+                python_type = FEATURE_PYTHON_TYPES[variable.type]
+                variable_schema["enum"] = [python_type(e) for e in variable.enum]
 
-                schema["properties"][variable_slug] = variable_schema
+            schema["properties"][variable_slug] = variable_schema
 
         return json.dumps(schema, indent=2)
 
     def get_jsonschema(self):
-        if self.schema_paths is not None:
+        if self.model.json_schema is not None:
             return self.load_remote_jsonschema()
         return self.generate_jsonschema()
 
 
 class Features:
-    _features = None
+    _features: Optional[list[Feature]] = None
+
+    @classmethod
+    def _read_manifest(
+        cls,
+        application: ApplicationConfig,
+        manifest_path: Path,
+        version: Version = None,
+    ):
+        with manifest_path.open() as manifest_file:
+            application_data = yaml.safe_load(manifest_file)
+            manifest = FeatureManifest.parse_obj(application_data)
+
+            for feature_slug, feature_model in manifest.__root__.items():
+                yield Feature(
+                    slug=feature_slug,
+                    application_slug=application.slug,
+                    model=feature_model.__root__,
+                    version=version,
+                )
 
     @classmethod
     def _load_features(cls):
         features = []
+        version_re = re.compile(r"^v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
 
         for application in NimbusConstants.APPLICATION_CONFIGS.values():
-            application_yaml_path = os.path.join(
-                settings.FEATURE_MANIFESTS_PATH, f"{application.slug}.yaml"
-            )
+            application_dir: Path = settings.FEATURE_MANIFESTS_PATH / application.slug
+            application_yaml_path = application_dir / "experimenter.yaml"
 
-            if os.path.exists(application_yaml_path):
-                with open(application_yaml_path) as application_yaml_file:
-                    application_data = yaml.load(
-                        application_yaml_file.read(), Loader=yaml.Loader
-                    )
-                    for feature_slug in application_data:
-                        feature_data = application_data[feature_slug]
-                        feature_data["slug"] = feature_slug
-                        feature_data["applicationSlug"] = application.slug
-                        features.append(Feature.parse_obj(feature_data))
+            if application_yaml_path.exists():
+                features.extend(cls._read_manifest(application, application_yaml_path))
+
+                for child in application_dir.iterdir():
+                    if not child.is_dir():
+                        continue
+
+                    if m := version_re.match(child.name):
+                        version = Version.from_match(m.groupdict())
+
+                        application_yaml_path = child / "experimenter.yaml"
+                        if application_yaml_path.exists():
+                            features.extend(
+                                cls._read_manifest(
+                                    application, application_yaml_path, version
+                                )
+                            )
 
         return features
 
@@ -127,15 +137,23 @@ class Features:
         cls._features = None
 
     @classmethod
-    def all(cls):
+    def all(cls) -> list[Feature]:
         if cls._features is None:
             cls._features = cls._load_features()
 
         return cls._features
 
     @classmethod
-    def by_application(cls, application):
-        return [f for f in cls.all() if f.applicationSlug == application]
+    def by_application(cls, application) -> list[Feature]:
+        return [f for f in cls.all() if f.application_slug == application]
+
+    @classmethod
+    def unversioned(cls) -> Iterable[Feature]:
+        return (f for f in cls.all() if f.version is None)
+
+    @classmethod
+    def versioned(cls) -> Iterable[Feature]:
+        return (f for f in cls.all() if f.version is not None)
 
 
 @register()

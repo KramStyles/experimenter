@@ -15,6 +15,7 @@ import {
   MOCK_EXPERIMENT,
   Subject,
 } from "src/components/Summary/TableBranches/mocks";
+import { mockExperimentQuery } from "src/lib/mocks";
 import { getExperiment_experimentBySlug_treatmentBranches_screenshots } from "src/types/getExperiment";
 
 describe("TableBranches", () => {
@@ -60,7 +61,7 @@ describe("TableBranches", () => {
               slug: "",
               description: "",
               ratio: 0,
-              featureValue: null,
+              featureValues: [],
               screenshots: [],
             },
           ],
@@ -90,12 +91,13 @@ describe("TableBranches", () => {
   });
 
   it("renders expected content", () => {
+    const featureValue = '{ "thing": true }';
     const expected = {
       name: "expected name",
       slug: "expected slug",
       description: "expected description",
       ratio: 42,
-      featureValue: '{ "thing": true }',
+      featureValue,
     };
 
     render(
@@ -107,6 +109,9 @@ describe("TableBranches", () => {
               ...expected,
               id: 456,
               screenshots: [],
+              featureValues: [
+                { featureConfig: { id: 1 }, value: featureValue },
+              ],
             },
             ...MOCK_EXPERIMENT.treatmentBranches!,
           ],
@@ -157,7 +162,9 @@ describe("TableBranches", () => {
               slug: "expected slug",
               description: "expected description",
               ratio: 42,
-              featureValue: '{ "thing": true }',
+              featureValues: [
+                { featureConfig: { id: 1 }, value: '{ "thing": true }' },
+              ],
               screenshots: expectedScreenshots,
             },
             ...MOCK_EXPERIMENT.treatmentBranches!,
@@ -197,7 +204,7 @@ describe("TableBranches", () => {
       slug: "expected-slug",
       description: "expected description",
       ratio: 42,
-      featureValue: '{ "thing": true }',
+      featureValues: [{ featureConfig: { id: 1 }, value: '{ "thing": true }' }],
       screenshots: [],
     };
 
@@ -235,7 +242,7 @@ describe("TableBranches", () => {
       slug: "expected-slug",
       description: "expected description",
       ratio: 42,
-      featureValue: '{ "thing": true }',
+      featureValues: [{ featureConfig: { id: 1 }, value: '{ "thing": true }' }],
       screenshots: [],
     };
 
@@ -265,7 +272,7 @@ describe("TableBranches", () => {
       slug: "expected-slug",
       description: "expected description",
       ratio: 42,
-      featureValue: '{ "thing": true }',
+      featureValues: [{ featureConfig: { id: 1 }, value: '{ "thing": true }' }],
       screenshots: [],
     };
 
@@ -300,7 +307,7 @@ describe("TableBranches", () => {
               slug: "treatment-1",
               description: "",
               ratio: 0,
-              featureValue: null,
+              featureValues: [],
               screenshots: [],
             },
             {
@@ -309,7 +316,7 @@ describe("TableBranches", () => {
               slug: "",
               description: "",
               ratio: 0,
-              featureValue: null,
+              featureValues: [],
               screenshots: [],
             },
           ],
@@ -329,5 +336,40 @@ describe("TableBranches", () => {
       const notSet = cell!.querySelector("[data-testid='not-set']");
       expect(notSet).toBeInTheDocument();
     }
+  });
+});
+
+describe("renders localization row as expected", () => {
+  it("when set", () => {
+    const { experiment } = mockExperimentQuery("demo-slug", {
+      isLocalized: true,
+      localizations: "test",
+    });
+    render(<Subject {...{ experiment }} />);
+    expect(screen.getByTestId("experiment-localizations")).toHaveTextContent(
+      "test",
+    );
+  });
+
+  it("when isLocalized is not checked and localized content is set", () => {
+    const { experiment } = mockExperimentQuery("demo-slug", {
+      isLocalized: false,
+      localizations: "test",
+    });
+    render(<Subject {...{ experiment }} />);
+    expect(screen.queryByTestId("experiment-localizations")).toBeNull();
+  });
+
+  it("renders show button for localized content", () => {
+    const { experiment } = mockExperimentQuery("demo-slug", {
+      isLocalized: true,
+      localizations: "test",
+    });
+    render(<Subject {...{ experiment }} />);
+    const localizations = screen.getByTestId("experiment-localizations");
+    expect(localizations).toHaveTextContent("test");
+    const showMore = screen.getByTestId("experiment-localizations-show-more");
+    fireEvent.click(showMore);
+    screen.getByTestId("experiment-localizations-hide");
   });
 });

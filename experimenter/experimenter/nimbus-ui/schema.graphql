@@ -5,12 +5,15 @@ type Query {
   """Retrieve a Nimbus experiment by its slug."""
   experimentBySlug(slug: String!): NimbusExperimentType
 
+  """List Nimbus Experiments by application."""
+  experimentsByApplication(application: NimbusExperimentApplicationEnum!): [NimbusExperimentType!]!
+
   """Nimbus Configuration Data for front-end usage."""
   nimbusConfig: NimbusConfigurationType
 }
 
 type NimbusExperimentType {
-  id: Int
+  id: Int!
   parent: NimbusExperimentType
   isRollout: Boolean
   isArchived: Boolean
@@ -39,7 +42,7 @@ type NimbusExperimentType {
   hypothesis: String
   primaryOutcomes: [String]
   secondaryOutcomes: [String]
-  featureConfigs: [NimbusFeatureConfigType]
+  featureConfigs: [NimbusFeatureConfigType!]
   warnFeatureSchema: Boolean
   targetingConfigSlug: String
   referenceBranch: NimbusBranchType
@@ -47,12 +50,18 @@ type NimbusExperimentType {
   riskRevenue: Boolean
   riskBrand: Boolean
   conclusionRecommendation: NimbusExperimentConclusionRecommendationEnum
+  takeawaysMetricGain: Boolean!
+  takeawaysGainAmount: String
+  takeawaysQbrLearning: Boolean!
   takeawaysSummary: String
   isFirstRun: Boolean!
   preventPrefConflicts: Boolean
   proposedReleaseDate: String
   isLocalized: Boolean
   localizations: String
+  qaStatus: NimbusExperimentQAStatusEnum
+  qaComment: String
+  subscribers: [NimbusUserType!]!
   documentationLinks: [NimbusDocumentationLinkType!]
   changes: [NimbusChangeLogType]
   canArchive: Boolean
@@ -63,14 +72,16 @@ type NimbusExperimentType {
   computedEnrollmentDays: Int
   computedEnrollmentEndDate: DateTime
   enrollmentEndDate: DateTime
-  featureConfig: NimbusFeatureConfigType
+  excludedExperimentsBranches: [NimbusExperimentBranchThroughExcludedType!]!
   isEnrollmentPausePending: Boolean
   isEnrollmentPaused: Boolean
+  isWeb: Boolean!
   jexlTargetingExpression: String
   monitoringDashboardUrl: String
   readyForReview: NimbusReviewType
   recipeJson: String
   rejection: NimbusChangeLogType
+  requiredExperimentsBranches: [NimbusExperimentBranchThroughRequiredType!]!
   resultsExpectedDate: DateTime
   resultsReady: Boolean
   reviewRequest: NimbusChangeLogType
@@ -225,13 +236,44 @@ enum NimbusExperimentFirefoxVersionEnum {
   FIREFOX_111_0_1
   FIREFOX_112
   FIREFOX_113
+  FIREFOX_113_0_1
   FIREFOX_114
+  FIREFOX_114_3_0
   FIREFOX_115
+  FIREFOX_115_0_2
   FIREFOX_116
+  FIREFOX_116_0_1
+  FIREFOX_116_2_0
+  FIREFOX_116_3_0
   FIREFOX_117
   FIREFOX_118
+  FIREFOX_118_0_1
+  FIREFOX_118_0_2
   FIREFOX_119
   FIREFOX_120
+  FIREFOX_121
+  FIREFOX_121_0_1
+  FIREFOX_122
+  FIREFOX_122_1_0
+  FIREFOX_122_2_0
+  FIREFOX_123
+  FIREFOX_124
+  FIREFOX_125
+  FIREFOX_126
+  FIREFOX_127
+  FIREFOX_128
+  FIREFOX_129
+  FIREFOX_130
+  FIREFOX_131
+  FIREFOX_132
+  FIREFOX_133
+  FIREFOX_134
+  FIREFOX_135
+  FIREFOX_136
+  FIREFOX_137
+  FIREFOX_138
+  FIREFOX_139
+  FIREFOX_140
 }
 
 enum NimbusExperimentApplicationEnum {
@@ -242,6 +284,9 @@ enum NimbusExperimentApplicationEnum {
   KLAR_ANDROID
   FOCUS_IOS
   KLAR_IOS
+  MONITOR
+  VPN
+  DEMO_APP
 }
 
 enum NimbusExperimentChannelEnum {
@@ -253,6 +298,9 @@ enum NimbusExperimentChannelEnum {
   ESR
   TESTFLIGHT
   AURORA
+  DEVELOPER
+  STAGING
+  PRODUCTION
 }
 
 type NimbusLocaleType {
@@ -287,9 +335,9 @@ type NimbusFeatureConfigType {
   description: String
   application: NimbusExperimentApplicationEnum
   ownerEmail: String
-  schema: String
-  setsPrefs: Boolean
   enabled: Boolean!
+  setsPrefs: Boolean
+  schema: String
 }
 
 type NimbusBranchType {
@@ -300,7 +348,6 @@ type NimbusBranchType {
   ratio: Int!
   featureValues: [NimbusBranchFeatureValueType]
   screenshots: [NimbusBranchScreenshotType!]
-  featureValue: String
 }
 
 type NimbusBranchFeatureValueType {
@@ -323,6 +370,13 @@ enum NimbusExperimentConclusionRecommendationEnum {
   FOLLOWUP
 }
 
+enum NimbusExperimentQAStatusEnum {
+  RED
+  YELLOW
+  GREEN
+  NOT_SET
+}
+
 type NimbusDocumentationLinkType {
   title: NimbusExperimentDocumentationLinkEnum
   link: String!
@@ -332,6 +386,7 @@ enum NimbusExperimentDocumentationLinkEnum {
   DS_JIRA
   DESIGN_DOC
   ENG_TICKET
+  QA_TICKET
 }
 
 type NimbusChangeLogType {
@@ -360,6 +415,11 @@ schema (one of the key benefits of GraphQL).
 """
 scalar JSONString
 
+type NimbusExperimentBranchThroughExcludedType {
+  branchSlug: String
+  excludedExperiment: NimbusExperimentType!
+}
+
 type NimbusReviewType {
   message: ObjectField
   warnings: ObjectField
@@ -368,6 +428,11 @@ type NimbusReviewType {
 
 """Utilized to serialize out Serializer errors"""
 scalar ObjectField
+
+type NimbusExperimentBranchThroughRequiredType {
+  branchSlug: String
+  requiredExperiment: NimbusExperimentType!
+}
 
 type NimbusSignoffRecommendationsType {
   qaSignoff: Boolean
@@ -390,7 +455,7 @@ type NimbusConfigurationType {
   channels: [NimbusLabelValueType]
   countries: [NimbusCountryType]
   documentationLink: [NimbusLabelValueType]
-  allFeatureConfigs: [NimbusFeatureConfigType]
+  allFeatureConfigs: [NimbusFeatureConfigType!]
   firefoxVersions: [NimbusLabelValueType]
   hypothesisDefault: String
   locales: [NimbusLocaleType]
@@ -401,8 +466,11 @@ type NimbusConfigurationType {
   owners: [NimbusUserType]
   targetingConfigs: [NimbusExperimentTargetingConfigType]
   conclusionRecommendations: [NimbusLabelValueType]
+  takeaways: [NimbusLabelValueType]
   types: [NimbusLabelValueType]
   statusUpdateExemptFields: [NimbusStatusUpdateExemptFieldsType]
+  populationSizingData: String
+  qaStatus: [NimbusLabelValueType]
 }
 
 type NimbusExperimentApplicationConfigType {
@@ -459,7 +527,7 @@ input ExperimentInput {
   conclusionRecommendation: NimbusExperimentConclusionRecommendationEnum
   countries: [String]
   documentationLinks: [DocumentationLinkInput]
-  featureConfigId: Int
+  excludedExperimentsBranches: [NimbusExperimentBranchThroughExcludedInput!]
   featureConfigIds: [Int]
   firefoxMaxVersion: NimbusExperimentFirefoxVersionEnum
   firefoxMinVersion: NimbusExperimentFirefoxVersionEnum
@@ -484,7 +552,10 @@ input ExperimentInput {
   proposedReleaseDate: String
   publicDescription: String
   publishStatus: NimbusExperimentPublishStatusEnum
+  qaComment: String
+  qaStatus: NimbusExperimentQAStatusEnum
   referenceBranch: BranchInput = null
+  requiredExperimentsBranches: [NimbusExperimentBranchThroughRequiredInput!]
   riskBrand: Boolean
   riskMitigationLink: String
   riskPartnerRelated: Boolean
@@ -492,6 +563,9 @@ input ExperimentInput {
   secondaryOutcomes: [String]
   status: NimbusExperimentStatusEnum
   statusNext: NimbusExperimentStatusEnum
+  takeawaysMetricGain: Boolean
+  takeawaysGainAmount: String
+  takeawaysQbrLearning: Boolean
   takeawaysSummary: String
   targetingConfigSlug: String
   totalEnrolledClients: Int
@@ -504,18 +578,22 @@ input DocumentationLinkInput {
   link: String!
 }
 
+input NimbusExperimentBranchThroughExcludedInput {
+  excludedExperiment: Int!
+  branchSlug: String
+}
+
 input BranchInput {
   id: Int
   name: String!
   description: String!
   ratio: Int!
-  featureValue: String
   featureValues: [BranchFeatureValueInput]
   screenshots: [BranchScreenshotInput]
 }
 
 input BranchFeatureValueInput {
-  featureConfig: Int
+  featureConfig: String
   value: String
 }
 
@@ -530,6 +608,11 @@ Create scalar that ignores normal serialization/deserialization, since
 that will be handled by the multipart request spec
 """
 scalar Upload
+
+input NimbusExperimentBranchThroughRequiredInput {
+  requiredExperiment: Int!
+  branchSlug: String
+}
 
 type UpdateExperiment {
   nimbusExperiment: NimbusExperimentType

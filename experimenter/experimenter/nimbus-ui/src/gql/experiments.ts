@@ -47,9 +47,15 @@ export const GET_EXPERIMENT_QUERY = gql`
       publicDescription
 
       conclusionRecommendation
+      takeawaysGainAmount
+      takeawaysMetricGain
+      takeawaysQbrLearning
       takeawaysSummary
 
       owner {
+        email
+      }
+      subscribers {
         email
       }
 
@@ -66,7 +72,12 @@ export const GET_EXPERIMENT_QUERY = gql`
         slug
         description
         ratio
-        featureValue
+        featureValues {
+          featureConfig {
+            id
+          }
+          value
+        }
         screenshots {
           id
           description
@@ -80,7 +91,12 @@ export const GET_EXPERIMENT_QUERY = gql`
         slug
         description
         ratio
-        featureValue
+        featureValues {
+          featureConfig {
+            id
+          }
+          value
+        }
         screenshots {
           id
           description
@@ -118,6 +134,37 @@ export const GET_EXPERIMENT_QUERY = gql`
       }
       isSticky
       isFirstRun
+      isWeb
+      excludedExperimentsBranches {
+        excludedExperiment {
+          id
+          slug
+          name
+          publicDescription
+          referenceBranch {
+            slug
+          }
+          treatmentBranches {
+            slug
+          }
+        }
+        branchSlug
+      }
+      requiredExperimentsBranches {
+        requiredExperiment {
+          id
+          slug
+          name
+          publicDescription
+          referenceBranch {
+            slug
+          }
+          treatmentBranches {
+            slug
+          }
+        }
+        branchSlug
+      }
       jexlTargetingExpression
 
       populationPercent
@@ -189,20 +236,25 @@ export const GET_EXPERIMENT_QUERY = gql`
       locales {
         id
         name
+        code
       }
       countries {
         id
         name
+        code
       }
       languages {
         id
         name
+        code
       }
       projects {
         id
         name
       }
       isRolloutDirty
+      qaComment
+      qaStatus
     }
   }
 `;
@@ -223,7 +275,6 @@ export const GET_EXPERIMENTS_QUERY = gql`
         description
         application
         ownerEmail
-        schema
       }
       targetingConfig {
         label
@@ -249,15 +300,12 @@ export const GET_EXPERIMENTS_QUERY = gql`
       status
       statusNext
       publishStatus
+      qaStatus
       monitoringDashboardUrl
       rolloutMonitoringDashboardUrl
       resultsExpectedDate
       resultsReady
       showResultsUrl
-      featureConfig {
-        slug
-        name
-      }
       channel
       populationPercent
       projects {
@@ -265,6 +313,27 @@ export const GET_EXPERIMENTS_QUERY = gql`
         name
       }
       hypothesis
+      takeawaysMetricGain
+      takeawaysQbrLearning
+    }
+  }
+`;
+
+export const GET_ALL_EXPERIMENTS_BY_APPLICATION_QUERY = gql`
+  query getAllExperimentsByApplication(
+    $application: NimbusExperimentApplicationEnum!
+  ) {
+    experimentsByApplication(application: $application) {
+      id
+      name
+      slug
+      publicDescription
+      referenceBranch {
+        slug
+      }
+      treatmentBranches {
+        slug
+      }
     }
   }
 `;

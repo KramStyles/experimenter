@@ -12,7 +12,12 @@ import {
 import React from "react";
 import { createMutationMock, Subject } from "src/components/Summary/mocks";
 import { CHANGELOG_MESSAGES, SUBMIT_ERROR } from "src/lib/constants";
-import { mockExperimentQuery, mockLiveRolloutQuery } from "src/lib/mocks";
+import {
+  mockExperimentQuery,
+  mockLiveRolloutQuery,
+  MOCK_EXPERIMENT,
+  MOCK_EXPERIMENTS_BY_APPLICATION,
+} from "src/lib/mocks";
 import {
   NimbusExperimentPublishStatusEnum,
   NimbusExperimentStatusEnum,
@@ -161,6 +166,7 @@ describe("Summary", () => {
           changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END,
           status: NimbusExperimentStatusEnum.LIVE,
           statusNext: NimbusExperimentStatusEnum.COMPLETE,
+          isEnrollmentPaused: true,
         },
       );
       render(
@@ -173,19 +179,19 @@ describe("Summary", () => {
       });
     });
 
-    it("can cancel review when the experiment is in review state", async () => {
+    it("can cancel ending experiment when the experiment is in review state", async () => {
       const refetch = jest.fn();
       const { experiment } = mockExperimentQuery("demo-slug", {
         status: NimbusExperimentStatusEnum.LIVE,
         publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
+        isEnrollmentPaused: true,
       });
       const mutationMock = createMutationMock(
         experiment.id!,
         NimbusExperimentPublishStatusEnum.IDLE,
         {
-          statusNext: NimbusExperimentStatusEnum.LIVE,
+          statusNext: NimbusExperimentStatusEnum.COMPLETE,
           changelogMessage: CHANGELOG_MESSAGES.CANCEL_REVIEW,
-          isEnrollmentPaused: false,
         },
       );
       render(
@@ -196,6 +202,36 @@ describe("Summary", () => {
       fireEvent.click(screen.getByTestId("cancel-review-start"));
       await waitFor(() => {
         expect(screen.queryByTestId("submit-error")).not.toBeInTheDocument();
+        expect(experiment.isEnrollmentPaused).toBeTruthy();
+      });
+    });
+
+    it("can cancel end enrollment when the experiment is in review state", async () => {
+      const refetch = jest.fn();
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
+        isEnrollmentPaused: false,
+      });
+      const mutationMock = createMutationMock(
+        experiment.id!,
+        NimbusExperimentPublishStatusEnum.IDLE,
+        {
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          isEnrollmentPaused: true,
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END_ENROLLMENT,
+        },
+      );
+      render(
+        <Subject props={experiment} mocks={[mutationMock]} {...{ refetch }} />,
+      );
+
+      await screen.findByTestId("cancel-review-start");
+      fireEvent.click(screen.getByTestId("cancel-review-start"));
+      await waitFor(() => {
+        expect(screen.queryByTestId("submit-error")).not.toBeInTheDocument();
+        expect(experiment.isEnrollmentPaused).toBeFalsy();
+        expect(experiment.isEnrollmentPausePending).toBeFalsy();
       });
     });
 
@@ -231,6 +267,49 @@ describe("Summary", () => {
       fireEvent.click(screen.getByTestId("cancel-review-start"));
 
       screen.queryByTestId("request-update-button");
+      await waitFor(() => {
+        expect(screen.queryByTestId("submit-error")).not.toBeInTheDocument();
+        expect(rollout.isEnrollmentPaused).toBeFalsy();
+        expect(rollout.isEnrollmentPausePending).toBeFalsy();
+      });
+    });
+
+    it("can cancel review for live rollout with paused enrollment", async () => {
+      const refetch = jest.fn();
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
+        statusNext: null,
+        isEnrollmentPaused: true,
+        isRolloutDirty: true,
+      });
+
+      const mutationMock = createMutationMock(
+        rollout.id!,
+        NimbusExperimentPublishStatusEnum.REVIEW,
+        {
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          changelogMessage: CHANGELOG_MESSAGES.CANCEL_REVIEW,
+          isEnrollmentPaused: false,
+        },
+      );
+
+      render(
+        <Subject
+          props={rollout}
+          mocks={[mockRollout, mutationMock]}
+          {...{ refetch }}
+        />,
+      );
+
+      await screen.findByTestId("cancel-review-start");
+      fireEvent.click(screen.getByTestId("cancel-review-start"));
+
+      screen.queryByTestId("request-update-button");
+      await waitFor(() => {
+        expect(screen.queryByTestId("submit-error")).not.toBeInTheDocument();
+        expect(rollout.isEnrollmentPaused).toBeTruthy();
+      });
     });
 
     it("handles submission with server API error", async () => {
@@ -260,6 +339,7 @@ describe("Summary", () => {
           changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END,
           statusNext: NimbusExperimentStatusEnum.COMPLETE,
           status: NimbusExperimentStatusEnum.LIVE,
+          isEnrollmentPaused: true,
         },
       );
       const errorMessage = "Something went very wrong.";
@@ -301,6 +381,34 @@ describe("Summary", () => {
           status: NimbusExperimentStatusEnum.LIVE,
           statusNext: NimbusExperimentStatusEnum.LIVE,
           isEnrollmentPaused: true,
+        },
+      );
+      render(
+        <Subject props={experiment} mocks={[mutationMock]} {...{ refetch }} />,
+      );
+      fireEvent.click(screen.getByTestId("end-enrollment-start"));
+      await waitFor(() => {
+        expect(refetch).toHaveBeenCalled();
+        expect(screen.queryByTestId("submit-error")).not.toBeInTheDocument();
+      });
+    });
+
+    it("can mark the experiment as requesting review on enrollment end confirmation when experiment is web", async () => {
+      const refetch = jest.fn();
+      const { experiment } = mockExperimentQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        statusNext: null,
+        isEnrollmentPaused: false,
+        isWeb: true,
+      });
+      const mutationMock = createMutationMock(
+        experiment.id!,
+        NimbusExperimentPublishStatusEnum.REVIEW,
+        {
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_END_ENROLLMENT,
+          status: NimbusExperimentStatusEnum.LIVE,
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          isEnrollmentPaused: false,
         },
       );
       render(
@@ -452,6 +560,223 @@ describe("Summary", () => {
       expect(
         screen.queryByTestId("end-enrollment-start"),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  it("do not show request update button for non rollouts", async () => {
+    const { mock, experiment } = mockExperimentQuery("demo-slug", {
+      status: NimbusExperimentStatusEnum.LIVE,
+      publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+      statusNext: null,
+      isEnrollmentPaused: false,
+      isRollout: false,
+      isRolloutDirty: false,
+    });
+
+    const mutationMock = createMutationMock(
+      experiment.id!,
+      NimbusExperimentPublishStatusEnum.IDLE,
+      {
+        changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_UPDATE,
+        statusNext: null,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        status: NimbusExperimentStatusEnum.LIVE,
+        isRolloutDirty: false,
+      },
+    );
+    render(<Subject props={experiment} mocks={[mock, mutationMock]} />);
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("request-update-button"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("request update button rendering", () => {
+    it("request update button disabled when rollout is live with no updates", async () => {
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        statusNext: null,
+        isEnrollmentPaused: false,
+        isRolloutDirty: false,
+      });
+
+      render(<Subject props={rollout} mocks={[mockRollout]} />);
+      const requestUpdateButton = await screen.findByTestId(
+        "request-update-button",
+      );
+      await waitFor(() => {
+        expect(requestUpdateButton).toBeDisabled();
+      });
+    });
+
+    it("request update button enabled when update is made", async () => {
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        statusNext: null,
+        isEnrollmentPaused: false,
+        isRolloutDirty: true,
+      });
+
+      const mutationMock = createMutationMock(
+        rollout.id!,
+        NimbusExperimentPublishStatusEnum.IDLE,
+        {
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_UPDATE,
+          statusNext: null,
+          publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+          status: NimbusExperimentStatusEnum.LIVE,
+          isRolloutDirty: true,
+        },
+      );
+      render(<Subject props={rollout} mocks={[mockRollout, mutationMock]} />);
+      const requestUpdateButton = await screen.findByTestId(
+        "request-update-button",
+      );
+      await waitFor(() => {
+        expect(requestUpdateButton).not.toBeDisabled();
+      });
+    });
+
+    it("request update button disabled when review is requested", async () => {
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.IDLE,
+        statusNext: null,
+        isEnrollmentPaused: false,
+        isRolloutDirty: false,
+      });
+
+      const mutationMock = createMutationMock(
+        rollout.id!,
+        NimbusExperimentPublishStatusEnum.REVIEW,
+        {
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_UPDATE,
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
+          status: NimbusExperimentStatusEnum.LIVE,
+          isRolloutDirty: true,
+        },
+      );
+      render(<Subject props={rollout} mocks={[mockRollout, mutationMock]} />);
+      const requestUpdateButton = await screen.findByTestId(
+        "request-update-button",
+      );
+      await waitFor(() => {
+        expect(requestUpdateButton).toBeDisabled();
+      });
+    });
+
+    it("request update button disabled when review is approved", async () => {
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.REVIEW,
+        statusNext: NimbusExperimentStatusEnum.LIVE,
+        isEnrollmentPaused: false,
+        isRolloutDirty: true,
+      });
+
+      const mutationMock = createMutationMock(
+        rollout.id!,
+        NimbusExperimentPublishStatusEnum.REVIEW,
+        {
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_UPDATE,
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          publishStatus: NimbusExperimentPublishStatusEnum.APPROVED,
+          status: NimbusExperimentStatusEnum.LIVE,
+          isRolloutDirty: true,
+        },
+      );
+      render(<Subject props={rollout} mocks={[mockRollout, mutationMock]} />);
+      const requestUpdateButton = await screen.findByTestId(
+        "request-update-button",
+      );
+      await waitFor(() => {
+        expect(requestUpdateButton).toBeDisabled();
+      });
+    });
+
+    it("request update button disabled when review is waiting", async () => {
+      const { mockRollout, rollout } = mockLiveRolloutQuery("demo-slug", {
+        status: NimbusExperimentStatusEnum.LIVE,
+        publishStatus: NimbusExperimentPublishStatusEnum.APPROVED,
+        statusNext: NimbusExperimentStatusEnum.LIVE,
+        isEnrollmentPaused: false,
+        isRolloutDirty: true,
+      });
+
+      const mutationMock = createMutationMock(
+        rollout.id!,
+        NimbusExperimentPublishStatusEnum.APPROVED,
+        {
+          changelogMessage: CHANGELOG_MESSAGES.REQUESTED_REVIEW_UPDATE,
+          statusNext: NimbusExperimentStatusEnum.LIVE,
+          publishStatus: NimbusExperimentPublishStatusEnum.WAITING,
+          status: NimbusExperimentStatusEnum.LIVE,
+          isRolloutDirty: true,
+        },
+      );
+      render(<Subject props={rollout} mocks={[mockRollout, mutationMock]} />);
+      const requestUpdateButton = await screen.findByTestId(
+        "request-update-button",
+      );
+      await waitFor(() => {
+        expect(requestUpdateButton).toBeDisabled();
+      });
+    });
+  });
+
+  it("render the required and excluded experiments all branches", () => {
+    const experiment = {
+      ...MOCK_EXPERIMENT,
+      requiredExperimentsBranches: [
+        {
+          requiredExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[1],
+          branchSlug: null,
+        },
+      ],
+      excludedExperimentsBranches: [
+        {
+          excludedExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[2],
+          branchSlug: null,
+        },
+      ],
+    };
+    render(<Subject props={experiment} />);
+
+    screen.getByRole("link", {
+      name: `${MOCK_EXPERIMENTS_BY_APPLICATION[1].name} (All branches)`,
+    });
+    screen.getByRole("link", {
+      name: `${MOCK_EXPERIMENTS_BY_APPLICATION[2].name} (All branches)`,
+    });
+  });
+
+  it("render the required and excluded experiments specific branches", () => {
+    const experiment = {
+      ...MOCK_EXPERIMENT,
+      requiredExperimentsBranches: [
+        {
+          requiredExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[1],
+          branchSlug: "control",
+        },
+      ],
+      excludedExperimentsBranches: [
+        {
+          excludedExperiment: MOCK_EXPERIMENTS_BY_APPLICATION[2],
+          branchSlug: "treatment",
+        },
+      ],
+    };
+    render(<Subject props={experiment} />);
+
+    screen.getByRole("link", {
+      name: `${MOCK_EXPERIMENTS_BY_APPLICATION[1].name} (control branch)`,
+    });
+    screen.getByRole("link", {
+      name: `${MOCK_EXPERIMENTS_BY_APPLICATION[2].name} (treatment branch)`,
     });
   });
 });

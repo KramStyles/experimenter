@@ -24,6 +24,7 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
+.python-version
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -76,6 +77,7 @@ target/
 **/.vscode/*
 
 # Hosted assets
+experimenter/experimenter/static/scripts/
 experimenter/experimenter/served/
 experimenter/experimenter/legacy/legacy-ui/assets/
 experimenter/experimenter/reporting/reporting-ui/assets/
@@ -109,3 +111,6 @@ experimenter/experimenter/outcomes/metric-hub.zip
 
 # Cirrus
 cirrus/server/app/__pycache__
+
+# Application Services for processing FML files
+experimenter/experimenter/features/manifests/application-services/

@@ -12,7 +12,10 @@ import { Subject as OverviewSubject } from "src/components/FormOverview/mocks";
 import { audienceFieldNames } from "src/components/PageEditAudience/FormAudience";
 import { Subject as AudienceSubject } from "src/components/PageEditAudience/FormAudience/mocks";
 import { branchFieldNames } from "src/components/PageEditBranches/FormBranches/FormBranch";
-import { SubjectBranch as BranchSubject } from "src/components/PageEditBranches/FormBranches/mocks";
+import {
+  MOCK_BRANCH,
+  SubjectBranch as BranchSubject,
+} from "src/components/PageEditBranches/FormBranches/mocks";
 import { metricsFieldNames } from "src/components/PageEditMetrics/FormMetrics";
 import { Subject as MetricsSubject } from "src/components/PageEditMetrics/FormMetrics/mocks";
 import { useCommonNestedForm, useForm } from "src/hooks";
@@ -101,11 +104,7 @@ describe("hooks/useCommonForm", () => {
         for (const name of overviewFieldNames) {
           // TODO EXP-805 test errors form saving once
           // documentationLinks uses useCommonForm
-          if (
-            !["application", "documentationLinks", "localizations"].includes(
-              name,
-            )
-          ) {
+          if (!["application", "documentationLinks"].includes(name)) {
             await screen.findByTestId(`${name}-form-errors`);
             // Some inputs, such as radios, will have identical test-ids
             // so just make sure there's at least one in the DOM
@@ -129,8 +128,6 @@ describe("hooks/useCommonForm", () => {
               "riskRevenue",
               "riskPartnerRelated",
               "projects",
-              "isLocalized",
-              "localizations",
             ].includes(name)
           ) {
             expect(
@@ -155,7 +152,14 @@ describe("hooks/useCommonForm", () => {
     it("FormAudience", () => {
       render(<AudienceSubject />);
       const filteredAudienceFieldNames = audienceFieldNames.filter(
-        (e) => e !== "languages" && e !== "isFirstRun",
+        (e) =>
+          ![
+            "languages",
+            "isFirstRun",
+            "proposedReleaseDate",
+            "requiredExperiments",
+            "excludedExperiments",
+          ].includes(e),
       );
       filteredAudienceFieldNames.forEach((name) => {
         expect(screen.queryByTestId(`${name}-form-errors`)).toBeInTheDocument();
@@ -164,16 +168,17 @@ describe("hooks/useCommonForm", () => {
     });
 
     it("FormBranch", () => {
-      const { container } = render(<BranchSubject />);
+      render(<BranchSubject />);
 
       branchFieldNames.forEach((name) => {
         const fieldName = `referenceBranch.${name}`;
-        expect(screen.queryByTestId(fieldName)).toBeInTheDocument();
-
-        expect(
-          screen.queryByTestId(`${fieldName}-form-errors`),
-        ).toBeInTheDocument();
+        screen.getByTestId(fieldName);
+        screen.getByTestId(`${fieldName}-form-errors`);
       });
+
+      for (let idx = 0; idx < MOCK_BRANCH!.featureValues!.length; idx++) {
+        screen.getByTestId(`referenceBranch.featureValues[${idx}].value`);
+      }
     });
   });
 

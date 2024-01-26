@@ -23,12 +23,14 @@ import {
   CHANGELOG_MESSAGES,
   EXTERNAL_URLS,
   LIFECYCLE_REVIEW_FLOWS,
+  QA_STATUS_PROPERTIES,
 } from "src/lib/constants";
 import { ExperimentContext } from "src/lib/contexts";
 import { getStatus, getSummaryAction, StatusCheck } from "src/lib/experiment";
 import { getExperiment_experimentBySlug } from "src/types/getExperiment";
 import {
   NimbusExperimentPublishStatusEnum,
+  NimbusExperimentQAStatusEnum,
   NimbusExperimentStatusEnum,
 } from "src/types/globalTypes";
 
@@ -127,6 +129,7 @@ const PageSummary = (props: RouteComponentProps) => {
 
   const {
     publishStatus,
+    qaStatus,
     canReview,
     reviewRequest: reviewRequestEvent,
     rejection: rejectionEvent,
@@ -211,6 +214,19 @@ const PageSummary = (props: RouteComponentProps) => {
       <h5 className="mb-3">
         Timeline
         {status.live && <StatusPills {...{ experiment, status }} />}
+        {qaStatus != null &&
+          (() => {
+            const qaStatusProps = QA_STATUS_PROPERTIES[qaStatus!];
+            if (qaStatus !== NimbusExperimentQAStatusEnum.NOT_SET) {
+              return (
+                <StatusPill
+                  testId="pill-qa-status"
+                  label={qaStatusProps.description}
+                  color={qaStatusProps.className}
+                />
+              );
+            }
+          })()}
       </h5>
 
       <SummaryTimeline {...{ experiment }} />

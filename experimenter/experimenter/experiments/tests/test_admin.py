@@ -1,46 +1,32 @@
 from decimal import Decimal
+from unittest import mock
 
-import mock
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 from import_export import fields
-from parameterized import parameterized
 
 from experimenter.experiments.admin import (
     DecimalWidget,
     NimbusBranchForeignKeyWidget,
     NimbusExperimentAdminForm,
     NimbusExperimentResource,
-    NimbusFeatureConfigAdmin,
 )
 from experimenter.experiments.changelog_utils import NimbusBranchChangeLogSerializer
 from experimenter.experiments.models import (
     NimbusBranch,
     NimbusChangeLog,
     NimbusExperiment,
-    NimbusFeatureConfig,
+    NimbusVersionedSchema,
 )
 from experimenter.experiments.tests.factories import (
     NimbusBranchFactory,
     NimbusChangeLogFactory,
     NimbusExperimentFactory,
-    NimbusFeatureConfigFactory,
 )
 from experimenter.openidc.tests.factories import UserFactory
 from experimenter.settings import DEV_USER_EMAIL
-
-
-class TestNimbusFeatureConfigAdmin(TestCase):
-    @parameterized.expand(((True,), (False,)))
-    def test_read_only_permission_for_object(self, read_only):
-        feature_config = NimbusFeatureConfigFactory.create(read_only=read_only)
-        feature_config_admin = NimbusFeatureConfigAdmin(NimbusFeatureConfig, None)
-        self.assertEqual(
-            feature_config_admin.has_change_permission(None, feature_config),
-            not read_only,
-        )
 
 
 class TestNimbusExperimentAdminForm(TestCase):
@@ -139,7 +125,7 @@ class TestNimbusExperimentAdmin(TestCase):
                 "admin:experiments_nimbusexperiment_change",
                 args=(experiment.pk,),
             ),
-            **{settings.OPENIDC_EMAIL_HEADER: user.email}
+            **{settings.OPENIDC_EMAIL_HEADER: user.email},
         )
         self.assertEqual(response.status_code, 200)
 
@@ -155,7 +141,7 @@ class TestNimbusExperimentAdmin(TestCase):
             ),
             {"action": "force_fetch_jetstream_data", "_selected_action": [experiment.id]},
             follow=True,
-            **{settings.OPENIDC_EMAIL_HEADER: user.email}
+            **{settings.OPENIDC_EMAIL_HEADER: user.email},
         )
         self.assertEqual(response.status_code, 200)
         mock_fetch_experiment_data.delay.assert_called_with(experiment.id)
@@ -231,7 +217,6 @@ class TestNimbusExperimentExport(TestCase):
         self.assertIsNone(conclusion_recommendation)
 
     def test_before_import_row(self):
-
         resource = NimbusExperimentResource()
 
         test_row = {"owner": 9999}
@@ -294,3 +279,31 @@ class TestNimbusExperimentExport(TestCase):
 
         self.assertGreaterEqual(len(post_changes), len(pre_changes))
         self.assertGreaterEqual(len(post_changes), num_changes)
+
+
+class NimbusVersionedSchemaAdminTests(TestCase):
+    def test_filter_application(self):
+        user = UserFactory.create(is_staff=True, is_superuser=True)
+        url = reverse("admin:experiments_nimbusversionedschema_changelist")
+
+        response = self.client.get(url, **{settings.OPENIDC_EMAIL_HEADER: user.email})
+        change_list = response.context["cl"]
+        self.assertEqual(
+            set(change_list.paginator.object_list),
+            set(NimbusVersionedSchema.objects.all()),
+        )
+
+        response = self.client.get(
+            f"{url}?application={NimbusExperiment.Application.DESKTOP}",
+            **{settings.OPENIDC_EMAIL_HEADER: user.email},
+        )
+        change_list = response.context["cl"]
+        self.assertEqual(len(change_list.paginator.object_list), 1)
+        self.assertEqual(
+            set(change_list.paginator.object_list),
+            set(
+                NimbusVersionedSchema.objects.filter(
+                    feature_config__application=NimbusExperiment.Application.DESKTOP
+                )
+            ),
+        )

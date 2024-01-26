@@ -1,46 +1,57 @@
-from typing import Any, Dict, List
+from enum import StrEnum
+from typing import Any
 
+from mozilla_nimbus_schemas.jetstream import AnalysisBasis
+from mozilla_nimbus_schemas.jetstream import Statistic as JetstreamStatisticResult
 from pydantic import BaseModel, create_model
 
+from experimenter.experiments.models import NimbusExperiment
 
-class Significance:
+
+class AnalysisWindow(StrEnum):
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    OVERALL = "overall"
+
+
+class Significance(StrEnum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
     NEUTRAL = "neutral"
 
 
-class BranchComparison:
+class BranchComparison(StrEnum):
     ABSOLUTE = "absolute"
     DIFFERENCE = "difference"
     UPLIFT = "relative_uplift"
 
 
-class Metric:
+class Metric(StrEnum):
     RETENTION = "retained"
     SEARCH = "search_count"
     DAYS_OF_USE = "days_of_use"
     USER_COUNT = "identity"
 
 
-class Statistic:
+class Statistic(StrEnum):
+    """
+    This is the list of statistics supported in Experimenter,
+    not a complete list of statistics available in Jetstream.
+    """
+
     PERCENT = "percentage"
     BINOMIAL = "binomial"
     MEAN = "mean"
     COUNT = "count"
 
 
-class Segment:
+class Segment(StrEnum):
     ALL = "all"
-
-
-class AnalysisBasis:
-    ENROLLMENTS = "enrollments"
-    EXPOSURES = "exposures"
 
 
 # TODO: Consider a "guardrail_metrics" group containing "days_of_use",
 # "retained", and "search_count".
-class Group:
+class Group(StrEnum):
     SEARCH = "search_metrics"
     USAGE = "usage_metrics"
     OTHER = "other_metrics"
@@ -70,27 +81,23 @@ for group, metrics in GROUPED_METRICS.items():
         METRIC_GROUP[metric] = group
 
 
-class JetstreamDataPoint(BaseModel):
-    lower: float = None
-    upper: float = None
-    point: float = None
-    metric: str = None
-    branch: str = None
-    statistic: str = None
-    window_index: str = None
-    comparison: str = None
-    segment: str = Segment.ALL
-    analysis_basis: str = AnalysisBasis.ENROLLMENTS
+class JetstreamDataPoint(JetstreamStatisticResult):
+    """Same as mozilla-nimbus-schemas `Statistic` but sets a default analysis_basis."""
+
+    analysis_basis: AnalysisBasis = AnalysisBasis.ENROLLMENTS
+
+    class Config:
+        use_enum_values = True
 
 
 class JetstreamData(BaseModel):
     """
     Parameters:
-        __root__: List[JetstreamDataPoint] = []
+        __root__: list[JetstreamDataPoint] = []
             The list should be filtered as needed coming in (e.g., by a given segment).
     """
 
-    __root__: List[JetstreamDataPoint] = []
+    __root__: list[JetstreamDataPoint] = []
 
     def __iter__(self):
         return iter(self.__root__)
@@ -103,9 +110,6 @@ class JetstreamData(BaseModel):
 
     def extend(self, item):
         self.__root__.extend(item)
-
-    def dict(self, exclude_none):
-        return [item.dict(exclude_none=exclude_none) for item in self.__root__]
 
     def get_segment(self):
         return self.__root__[0].segment or Segment.ALL
@@ -164,18 +168,18 @@ class DataPoint(BaseModel):
     def set_window_index(self, window_index):
         self.window_index = window_index
 
-    def has_bounds(self):
+    def has_bounds(self) -> bool:
         return self.lower and self.upper
 
 
 class BranchComparisonData(BaseModel):
-    all: List[DataPoint] = []
+    all: list[DataPoint] = []
     first: DataPoint = DataPoint()
 
 
 class SignificanceData(BaseModel):
-    overall: Dict[str, Any] = {}
-    weekly: Dict[str, Any] = {}
+    overall: dict[str, Any] = {}
+    weekly: dict[str, Any] = {}
 
 
 class MetricData(BaseModel):
@@ -186,32 +190,65 @@ class MetricData(BaseModel):
     percent: float = None
 
 
+def compute_significance(data_point: DataPoint) -> Significance:
+    if max(data_point.lower, data_point.upper, 0) == 0:
+        return Significance.NEGATIVE
+
+    if min(data_point.lower, data_point.upper, 0) == 0:
+        return Significance.POSITIVE
+
+    return Significance.NEUTRAL
+
+
 class ResultsObjectModelBase(BaseModel):
-    def __init__(self, result_metrics, data, experiment, window="overall"):
-        super(ResultsObjectModelBase, self).__init__()
+    def __init__(
+        self,
+        result_metrics: dict[str, set[Statistic]],
+        data: JetstreamData,
+        experiment: NimbusExperiment,
+        window: AnalysisWindow = AnalysisWindow.OVERALL,
+    ):
+        super().__init__()
+
+        assert experiment.reference_branch
 
         for jetstream_data_point in data:
             metric = jetstream_data_point.metric
             statistic = jetstream_data_point.statistic
 
-            branch_comparison = (
-                BranchComparison.ABSOLUTE
-                if jetstream_data_point.comparison is None
-                else jetstream_data_point.comparison
-            )
-            data_point = DataPoint(
-                lower=jetstream_data_point.lower,
-                upper=jetstream_data_point.upper,
-                point=jetstream_data_point.point,
-            )
-
-            # For "overall" data, set window_index to 1 for uniformity
-            window_index = 1 if window == "overall" else jetstream_data_point.window_index
-
             if metric in result_metrics and statistic in result_metrics[metric]:
+                comparison_to_branch = jetstream_data_point.comparison_to_branch
+
+                branch_comparison = (
+                    BranchComparison.ABSOLUTE
+                    if jetstream_data_point.comparison is None
+                    else jetstream_data_point.comparison
+                )
+                data_point = DataPoint(
+                    lower=jetstream_data_point.lower,
+                    upper=jetstream_data_point.upper,
+                    point=jetstream_data_point.point,
+                )
+                comparison_to_reference = (
+                    experiment.reference_branch.slug == comparison_to_branch
+                )
+                comparison_to_reference_or_absolute = (
+                    experiment.reference_branch.slug == comparison_to_branch
+                    or branch_comparison == BranchComparison.ABSOLUTE
+                )
+
+                # Set window_index (always 1 for OVERALL). Used by weekly DataPoint
+                # objects and for storing significance for each window.
+                window_index = (
+                    1
+                    if window == AnalysisWindow.OVERALL
+                    else jetstream_data_point.window_index
+                )
+
                 branch = jetstream_data_point.branch
                 branch_obj = getattr(self, branch)
                 branch_obj.is_control = experiment.reference_branch.slug == branch
+
                 group_obj = getattr(
                     branch_obj.branch_data, METRIC_GROUP.get(metric, Group.OTHER)
                 )
@@ -227,18 +264,74 @@ class ResultsObjectModelBase(BaseModel):
                     branch_comparison == BranchComparison.DIFFERENCE
                     and data_point.has_bounds()
                 ):
-                    getattr(metric_data.significance, window)[
-                        window_index
-                    ] = self.compute_significance(data_point)
+                    significance = compute_significance(data_point)
+                    if comparison_to_reference:
+                        getattr(metric_data.significance, window)[
+                            window_index
+                        ] = significance
+                    if comparison_to_branch is not None:
+                        significance_to_branch = getattr(
+                            metric_data.significance, comparison_to_branch
+                        )
+                        getattr(significance_to_branch, window)[
+                            window_index
+                        ] = significance
 
-                if window == "weekly":
+                if window == AnalysisWindow.WEEKLY:
                     data_point.set_window_index(window_index)
 
                 comparison_data = getattr(metric_data, branch_comparison)
-                if len(comparison_data.all) == 0:
-                    comparison_data.first = data_point
+                if comparison_to_reference_or_absolute:
+                    if len(comparison_data.all) == 0:
+                        comparison_data.first = data_point
 
-                comparison_data.all.append(data_point)
+                    # TODO: remove `if` when this bug is fixed:
+                    #    https://github.com/mozilla/experimenter/issues/10043
+                    # ignore duplicate results
+                    # - OVERALL can only have one
+                    # - WEEKLY should not have dupes for the same index
+                    if (
+                        window == AnalysisWindow.OVERALL and len(comparison_data.all) == 0
+                    ) or (
+                        window == AnalysisWindow.WEEKLY
+                        and len(
+                            [
+                                p
+                                for p in comparison_data.all
+                                if p.window_index == window_index
+                            ]
+                        )
+                        == 0
+                    ):
+                        comparison_data.all.append(data_point)
+
+                if comparison_to_branch is not None:
+                    pairwise_comparison_data = getattr(
+                        comparison_data, comparison_to_branch
+                    )
+                    if len(pairwise_comparison_data.all) == 0:
+                        pairwise_comparison_data.first = data_point
+
+                    # TODO: remove `if` when this bug is fixed:
+                    #    https://github.com/mozilla/experimenter/issues/10043
+                    # ignore duplicate results
+                    # - OVERALL can only have one
+                    # - WEEKLY should not have dupes for the same index
+                    if (
+                        window == AnalysisWindow.OVERALL
+                        and len(pairwise_comparison_data.all) == 0
+                    ) or (
+                        window == AnalysisWindow.WEEKLY
+                        and len(
+                            [
+                                p
+                                for p in pairwise_comparison_data.all
+                                if p.window_index == window_index
+                            ]
+                        )
+                        == 0
+                    ):
+                        pairwise_comparison_data.all.append(data_point)
 
     def append_conversion_count(self, primary_metrics_set):
         for branch_name in self.dict():
@@ -261,6 +354,9 @@ class ResultsObjectModelBase(BaseModel):
                     primary_metric_data, BranchComparison.ABSOLUTE
                 )
 
+                if not absolute_primary_metric_vals.all:
+                    continue
+
                 population_count = absolute_user_counts.first.point
                 conversion_percent = absolute_primary_metric_vals.first.point
 
@@ -271,14 +367,6 @@ class ResultsObjectModelBase(BaseModel):
                 absolute_primary_metric_vals.first.count = conversion_count
                 absolute_primary_metric_vals.all[0].count = conversion_count
 
-    def compute_significance(self, data_point):
-        if max(data_point.lower, data_point.upper, 0) == 0:
-            return Significance.NEGATIVE
-        if min(data_point.lower, data_point.upper, 0) == 0:
-            return Significance.POSITIVE
-        else:
-            return Significance.NEUTRAL
-
 
 """
     Dynamically create BranchData and ResultsObjectModel objects.
@@ -287,16 +375,35 @@ class ResultsObjectModelBase(BaseModel):
 """
 
 
-def create_results_object_model(data):
+def create_results_object_model(data: JetstreamData):
     branches = {}
     metrics = {}
+
     for jetstream_data_point in data:
         branches[jetstream_data_point.branch] = {}
+
+    # create a dynamic model that extends BranchComparisonData with all branches
+    branches_data = {b: BranchComparisonData() for b in branches}
+    PairwiseBranchComparisonData = create_model(
+        "PairwiseBranchComparisonData",
+        **branches_data,
+        __base__=BranchComparisonData,
+    )
+
+    # create a dynamic model that extends SignificanceData with all branches
+    branches_significance_data = {b: SignificanceData() for b in branches}
+    PairwiseSignificanceData = create_model(
+        "PairwiseSignificanceData",
+        **branches_significance_data,
+        __base__=SignificanceData,
+    )
+
+    for jetstream_data_point in data:
         metrics[jetstream_data_point.metric] = MetricData(
             absolute=BranchComparisonData(),
-            difference=BranchComparisonData(),
-            relative_uplift=BranchComparisonData(),
-            significance=SignificanceData(),
+            difference=PairwiseBranchComparisonData(),
+            relative_uplift=PairwiseBranchComparisonData(),
+            significance=PairwiseSignificanceData(),
         )
 
     search_data = {k: v for k, v in metrics.items() if k in SEARCH_METRICS}

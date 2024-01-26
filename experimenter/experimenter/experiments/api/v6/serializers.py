@@ -29,41 +29,7 @@ class NimbusBucketRangeSerializer(serializers.ModelSerializer):
         )
 
 
-class NimbusBranchSerializerSingleFeature(serializers.ModelSerializer):
-    feature = serializers.SerializerMethodField()
-
-    class Meta:
-        model = NimbusBranch
-        fields = ("slug", "ratio", "feature")
-
-    def get_feature(self, obj):
-        feature_config = None
-        feature_config_slug = None
-        feature_value = {}
-
-        feature_configs = obj.experiment.feature_configs.all()
-        feature_values = obj.feature_values.all()
-        if feature_configs:
-            feature_config = sorted(feature_configs, key=lambda f: f.slug)[0]
-            feature_config_slug = feature_config.slug
-            if feature_config in [fv.feature_config for fv in feature_values]:
-                branch_feature_value = [
-                    fv for fv in feature_values if fv.feature_config == feature_config
-                ][0]
-
-                with contextlib.suppress(json.JSONDecodeError):
-                    # feature_value may be invalid JSON while the experiment is
-                    # still being drafted
-                    feature_value = json.loads(branch_feature_value.value)
-
-        return {
-            "featureId": feature_config_slug,
-            "enabled": True,  # TODO: Remove after Desktop 104 is no longer supported
-            "value": feature_value,
-        }
-
-
-class NimbusBranchSerializerMultiFeature(serializers.ModelSerializer):
+class NimbusBranchSerializer(serializers.ModelSerializer):
     features = serializers.SerializerMethodField()
 
     class Meta:
@@ -87,7 +53,7 @@ class NimbusBranchSerializerMultiFeature(serializers.ModelSerializer):
         return features
 
 
-class NimbusBranchSerializerMultiFeatureDesktop(NimbusBranchSerializerMultiFeature):
+class NimbusBranchSerializerDesktop(NimbusBranchSerializer):
     feature = serializers.SerializerMethodField()
 
     class Meta:
@@ -97,6 +63,21 @@ class NimbusBranchSerializerMultiFeatureDesktop(NimbusBranchSerializerMultiFeatu
     def get_feature(self, obj):
         return {
             "featureId": "this-is-included-for-desktop-pre-95-support",
+            "enabled": False,  # TODO: Remove after Desktop 104 is no longer supported
+            "value": {},
+        }
+
+
+class NimbusBranchSerializerMobile(NimbusBranchSerializer):
+    feature = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NimbusBranch
+        fields = ("slug", "ratio", "feature", "features")
+
+    def get_feature(self, obj):
+        return {
+            "featureId": "this-is-included-for-mobile-pre-96-support",
             "enabled": False,  # TODO: Remove after Desktop 104 is no longer supported
             "value": {},
         }
@@ -119,7 +100,7 @@ class NimbusExperimentSerializer(serializers.ModelSerializer):
     probeSets = serializers.ReadOnlyField(default=[])
     outcomes = serializers.SerializerMethodField()
     startDate = serializers.DateField(source="start_date")
-    enrollmentEndDate = serializers.DateField(source="computed_enrollment_end_date")
+    enrollmentEndDate = serializers.DateField(source="actual_enrollment_end_date")
     endDate = serializers.DateField(source="end_date")
     proposedDuration = serializers.ReadOnlyField(source="proposed_duration")
     proposedEnrollment = serializers.ReadOnlyField(source="proposed_enrollment")
@@ -128,6 +109,8 @@ class NimbusExperimentSerializer(serializers.ModelSerializer):
         source="is_client_schema_disabled"
     )
     localizations = serializers.SerializerMethodField()
+    locales = serializers.SerializerMethodField()
+    publishedDate = serializers.DateTimeField(source="published_date")
 
     class Meta:
         model = NimbusExperiment
@@ -158,6 +141,8 @@ class NimbusExperimentSerializer(serializers.ModelSerializer):
             "referenceBranch",
             "featureValidationOptOut",
             "localizations",
+            "locales",
+            "publishedDate",
         )
 
     def get_application(self, obj):
@@ -170,16 +155,13 @@ class NimbusExperimentSerializer(serializers.ModelSerializer):
         return obj.application_config.channel_app_id.get(obj.channel, "")
 
     def get_branches(self, obj):
-        if (
-            obj.application == NimbusExperiment.Application.DESKTOP
-            and NimbusExperiment.Version.parse(obj.firefox_min_version)
-            >= NimbusExperiment.Version.parse(NimbusExperiment.Version.FIREFOX_95)
-        ):
-            return NimbusBranchSerializerMultiFeatureDesktop(
-                obj.branches.all(), many=True
-            ).data
+        serializer_cls = NimbusBranchSerializer
+        if obj.application == NimbusExperiment.Application.DESKTOP:
+            serializer_cls = NimbusBranchSerializerDesktop
+        elif NimbusExperiment.Application.is_mobile(obj.application):
+            serializer_cls = NimbusBranchSerializerMobile
 
-        return NimbusBranchSerializerSingleFeature(obj.branches.all(), many=True).data
+        return serializer_cls(obj.branches.all(), many=True).data
 
     def get_featureIds(self, obj):
         return sorted(
@@ -205,3 +187,8 @@ class NimbusExperimentSerializer(serializers.ModelSerializer):
         if obj.is_localized:
             with contextlib.suppress(json.JSONDecodeError):
                 return json.loads(obj.localizations)
+
+    def get_locales(self, obj):
+        locale_codes = [locale.code for locale in obj.locales.all()]
+        if len(locale_codes):
+            return locale_codes

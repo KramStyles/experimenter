@@ -8,6 +8,7 @@
 //==============================================================
 
 export enum NimbusExperimentApplicationEnum {
+  DEMO_APP = "DEMO_APP",
   DESKTOP = "DESKTOP",
   FENIX = "FENIX",
   FOCUS_ANDROID = "FOCUS_ANDROID",
@@ -15,15 +16,20 @@ export enum NimbusExperimentApplicationEnum {
   IOS = "IOS",
   KLAR_ANDROID = "KLAR_ANDROID",
   KLAR_IOS = "KLAR_IOS",
+  MONITOR = "MONITOR",
+  VPN = "VPN",
 }
 
 export enum NimbusExperimentChannelEnum {
   AURORA = "AURORA",
   BETA = "BETA",
+  DEVELOPER = "DEVELOPER",
   ESR = "ESR",
   NIGHTLY = "NIGHTLY",
   NO_CHANNEL = "NO_CHANNEL",
+  PRODUCTION = "PRODUCTION",
   RELEASE = "RELEASE",
+  STAGING = "STAGING",
   TESTFLIGHT = "TESTFLIGHT",
   UNBRANDED = "UNBRANDED",
 }
@@ -40,6 +46,7 @@ export enum NimbusExperimentDocumentationLinkEnum {
   DESIGN_DOC = "DESIGN_DOC",
   DS_JIRA = "DS_JIRA",
   ENG_TICKET = "ENG_TICKET",
+  QA_TICKET = "QA_TICKET",
 }
 
 export enum NimbusExperimentFirefoxVersionEnum {
@@ -65,16 +72,47 @@ export enum NimbusExperimentFirefoxVersionEnum {
   FIREFOX_111_0_1 = "FIREFOX_111_0_1",
   FIREFOX_112 = "FIREFOX_112",
   FIREFOX_113 = "FIREFOX_113",
+  FIREFOX_113_0_1 = "FIREFOX_113_0_1",
   FIREFOX_114 = "FIREFOX_114",
+  FIREFOX_114_3_0 = "FIREFOX_114_3_0",
   FIREFOX_115 = "FIREFOX_115",
+  FIREFOX_115_0_2 = "FIREFOX_115_0_2",
   FIREFOX_116 = "FIREFOX_116",
+  FIREFOX_116_0_1 = "FIREFOX_116_0_1",
+  FIREFOX_116_2_0 = "FIREFOX_116_2_0",
+  FIREFOX_116_3_0 = "FIREFOX_116_3_0",
   FIREFOX_117 = "FIREFOX_117",
   FIREFOX_118 = "FIREFOX_118",
+  FIREFOX_118_0_1 = "FIREFOX_118_0_1",
+  FIREFOX_118_0_2 = "FIREFOX_118_0_2",
   FIREFOX_119 = "FIREFOX_119",
   FIREFOX_12 = "FIREFOX_12",
   FIREFOX_120 = "FIREFOX_120",
+  FIREFOX_121 = "FIREFOX_121",
+  FIREFOX_121_0_1 = "FIREFOX_121_0_1",
+  FIREFOX_122 = "FIREFOX_122",
+  FIREFOX_122_1_0 = "FIREFOX_122_1_0",
+  FIREFOX_122_2_0 = "FIREFOX_122_2_0",
+  FIREFOX_123 = "FIREFOX_123",
+  FIREFOX_124 = "FIREFOX_124",
+  FIREFOX_125 = "FIREFOX_125",
+  FIREFOX_126 = "FIREFOX_126",
+  FIREFOX_127 = "FIREFOX_127",
+  FIREFOX_128 = "FIREFOX_128",
+  FIREFOX_129 = "FIREFOX_129",
   FIREFOX_13 = "FIREFOX_13",
+  FIREFOX_130 = "FIREFOX_130",
+  FIREFOX_131 = "FIREFOX_131",
+  FIREFOX_132 = "FIREFOX_132",
+  FIREFOX_133 = "FIREFOX_133",
+  FIREFOX_134 = "FIREFOX_134",
+  FIREFOX_135 = "FIREFOX_135",
+  FIREFOX_136 = "FIREFOX_136",
+  FIREFOX_137 = "FIREFOX_137",
+  FIREFOX_138 = "FIREFOX_138",
+  FIREFOX_139 = "FIREFOX_139",
   FIREFOX_14 = "FIREFOX_14",
+  FIREFOX_140 = "FIREFOX_140",
   FIREFOX_15 = "FIREFOX_15",
   FIREFOX_16 = "FIREFOX_16",
   FIREFOX_17 = "FIREFOX_17",
@@ -175,6 +213,13 @@ export enum NimbusExperimentPublishStatusEnum {
   WAITING = "WAITING",
 }
 
+export enum NimbusExperimentQAStatusEnum {
+  GREEN = "GREEN",
+  NOT_SET = "NOT_SET",
+  RED = "RED",
+  YELLOW = "YELLOW",
+}
+
 export enum NimbusExperimentStatusEnum {
   COMPLETE = "COMPLETE",
   DRAFT = "DRAFT",
@@ -183,7 +228,7 @@ export enum NimbusExperimentStatusEnum {
 }
 
 export interface BranchFeatureValueInput {
-  featureConfig?: number | null;
+  featureConfig?: string | null;
   value?: string | null;
 }
 
@@ -192,7 +237,6 @@ export interface BranchInput {
   name: string;
   description: string;
   ratio: number;
-  featureValue?: string | null;
   featureValues?: (BranchFeatureValueInput | null)[] | null;
   screenshots?: (BranchScreenshotInput | null)[] | null;
 }
@@ -221,7 +265,7 @@ export interface ExperimentInput {
   conclusionRecommendation?: NimbusExperimentConclusionRecommendationEnum | null;
   countries?: (string | null)[] | null;
   documentationLinks?: (DocumentationLinkInput | null)[] | null;
-  featureConfigId?: number | null;
+  excludedExperimentsBranches?: NimbusExperimentBranchThroughExcludedInput[] | null;
   featureConfigIds?: (number | null)[] | null;
   firefoxMaxVersion?: NimbusExperimentFirefoxVersionEnum | null;
   firefoxMinVersion?: NimbusExperimentFirefoxVersionEnum | null;
@@ -246,7 +290,10 @@ export interface ExperimentInput {
   proposedReleaseDate?: string | null;
   publicDescription?: string | null;
   publishStatus?: NimbusExperimentPublishStatusEnum | null;
+  qaComment?: string | null;
+  qaStatus?: NimbusExperimentQAStatusEnum | null;
   referenceBranch?: BranchInput | null;
+  requiredExperimentsBranches?: NimbusExperimentBranchThroughRequiredInput[] | null;
   riskBrand?: boolean | null;
   riskMitigationLink?: string | null;
   riskPartnerRelated?: boolean | null;
@@ -254,11 +301,24 @@ export interface ExperimentInput {
   secondaryOutcomes?: (string | null)[] | null;
   status?: NimbusExperimentStatusEnum | null;
   statusNext?: NimbusExperimentStatusEnum | null;
+  takeawaysMetricGain?: boolean | null;
+  takeawaysGainAmount?: string | null;
+  takeawaysQbrLearning?: boolean | null;
   takeawaysSummary?: string | null;
   targetingConfigSlug?: string | null;
   totalEnrolledClients?: number | null;
   treatmentBranches?: (BranchInput | null)[] | null;
   warnFeatureSchema?: boolean | null;
+}
+
+export interface NimbusExperimentBranchThroughExcludedInput {
+  excludedExperiment: number;
+  branchSlug?: string | null;
+}
+
+export interface NimbusExperimentBranchThroughRequiredInput {
+  requiredExperiment: number;
+  branchSlug?: string | null;
 }
 
 //==============================================================

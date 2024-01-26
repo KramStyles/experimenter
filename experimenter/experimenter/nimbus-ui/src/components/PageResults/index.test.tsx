@@ -26,6 +26,7 @@ import {
   mockAnalysisWithErrorsAndResults,
   mockAnalysisWithExposures,
   mockAnalysisWithSegments,
+  mockAnalysisWithWeeklyExposures,
   MOCK_METADATA_WITH_CONFIG,
 } from "src/lib/visualization/mocks";
 import { AnalysisData } from "src/lib/visualization/types";
@@ -34,6 +35,9 @@ import { NimbusExperimentStatusEnum } from "src/types/globalTypes";
 
 let mockExperiment: getExperiment_experimentBySlug;
 let mockAnalysisData: AnalysisData | undefined;
+
+const ENROLLMENTS_BASIS = "enrollments";
+const EXPOSURES_BASIS = "exposures";
 
 describe("PageResults", () => {
   beforeAll(() => {
@@ -107,7 +111,7 @@ describe("PageResults", () => {
   it("hides the analysis segment selector when there are no custom segments", async () => {
     render(<Subject />);
 
-    expect(screen.queryByText("Segment:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Segment")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("segment-results-selector"),
     ).not.toBeInTheDocument();
@@ -121,29 +125,30 @@ describe("PageResults", () => {
     const defaultSegment = "all";
     const otherSegment = "a_different_segment";
 
-    expect(screen.getByText("Segment:"));
+    expect(screen.getByText("Segment"));
     const segmentSelectParent = screen.getByTestId("segment-results-selector");
     expect(within(segmentSelectParent).getByText(defaultSegment));
+    expect(
+      within(segmentSelectParent).getByTestId(
+        `${defaultSegment}-segment-radio`,
+      ),
+    ).toBeChecked();
+    expect(within(segmentSelectParent).getByText(otherSegment));
+    expect(
+      within(segmentSelectParent).getByTestId(`${otherSegment}-segment-radio`),
+    ).not.toBeChecked();
 
-    let curSegment = container.getElementsByClassName(
-      "segmentation__single-value",
+    fireEvent.click(
+      within(segmentSelectParent).getByTestId(`${otherSegment}-segment-radio`),
     );
-    expect(curSegment).toHaveLength(1);
-    expect(curSegment[0]).toHaveTextContent(defaultSegment);
-
-    const segmentSelect = container.getElementsByClassName(
-      "segmentation__control",
-    )[0];
-
-    expect(segmentSelect).not.toBeNull();
-
-    fireEvent.keyDown(segmentSelect, { keyCode: 40 });
-    await waitFor(() => within(segmentSelectParent).getByText(otherSegment));
-    fireEvent.click(within(segmentSelectParent).getByText(otherSegment));
-
-    curSegment = container.getElementsByClassName("segmentation__single-value");
-    expect(curSegment).toHaveLength(1);
-    expect(curSegment[0]).toHaveTextContent(otherSegment);
+    expect(
+      within(segmentSelectParent).getByTestId(
+        `${defaultSegment}-segment-radio`,
+      ),
+    ).not.toBeChecked();
+    expect(
+      within(segmentSelectParent).getByTestId(`${otherSegment}-segment-radio`),
+    ).toBeChecked();
   });
 
   it("hides the analysis basis selector when there are no exposures", async () => {
@@ -156,12 +161,7 @@ describe("PageResults", () => {
   });
 
   it("displays the analysis basis options properly", async () => {
-    const { container } = render(
-      <Subject mockAnalysisData={mockAnalysisWithExposures} />,
-    );
-
-    const defaultBasis = "enrollments";
-    const otherBasis = "exposures";
+    render(<Subject mockAnalysisData={mockAnalysisWithExposures} />);
 
     expect(screen.getByText("Analysis Basis"));
     const analysisBasisSelectParent = screen.getByTestId(
@@ -169,22 +169,41 @@ describe("PageResults", () => {
     );
 
     // both exist
-    expect(within(analysisBasisSelectParent).getByText(defaultBasis));
-    expect(within(analysisBasisSelectParent).getByText(otherBasis));
+    expect(within(analysisBasisSelectParent).getByText(ENROLLMENTS_BASIS));
+    expect(within(analysisBasisSelectParent).getByText(EXPOSURES_BASIS));
 
     // enrollments checked by default
     expect(
-      within(analysisBasisSelectParent).getByTestId(`${defaultBasis}-radio`),
+      within(analysisBasisSelectParent).getByTestId(
+        `${ENROLLMENTS_BASIS}-basis-radio`,
+      ),
     ).toBeChecked();
 
     fireEvent.click(
-      within(analysisBasisSelectParent).getByTestId(`${otherBasis}-radio`),
+      within(analysisBasisSelectParent).getByTestId(
+        `${EXPOSURES_BASIS}-basis-radio`,
+      ),
     );
 
     // exposures checked after click
     expect(
-      within(analysisBasisSelectParent).getByTestId(`${otherBasis}-radio`),
+      within(analysisBasisSelectParent).getByTestId(
+        `${EXPOSURES_BASIS}-basis-radio`,
+      ),
     ).toBeChecked();
+  });
+
+  it("displays the analysis basis options for weekly results", async () => {
+    render(<Subject mockAnalysisData={mockAnalysisWithWeeklyExposures} />);
+
+    expect(screen.getByText("Analysis Basis"));
+    const analysisBasisSelectParent = screen.getByTestId(
+      "analysis-basis-results-selector",
+    );
+
+    // both exist
+    expect(within(analysisBasisSelectParent).getByText(ENROLLMENTS_BASIS));
+    expect(within(analysisBasisSelectParent).getByText(EXPOSURES_BASIS));
   });
 
   it("displays analysis errors", async () => {

@@ -6,11 +6,16 @@ import React, { useState } from "react";
 import { Accordion, Button, Card, Table } from "react-bootstrap";
 import { Code } from "src/components/Code";
 import NotSet from "src/components/NotSet";
+import { MOBILE_APPLICATIONS } from "src/components/PageEditAudience/FormAudience";
 import { displayConfigLabelOrNotSet } from "src/components/Summary";
 import { useConfig } from "src/hooks";
 import { ReactComponent as CollapseMinus } from "src/images/minus.svg";
 import { ReactComponent as ExpandPlus } from "src/images/plus.svg";
-import { getExperiment_experimentBySlug } from "src/types/getExperiment";
+import {
+  getExperiment_experimentBySlug,
+  getExperiment_experimentBySlug_excludedExperimentsBranches_excludedExperiment,
+  getExperiment_experimentBySlug_requiredExperimentsBranches_requiredExperiment,
+} from "src/types/getExperiment";
 import { NimbusExperimentApplicationEnum } from "src/types/globalTypes";
 
 type TableAudienceProps = {
@@ -23,6 +28,9 @@ const TableAudience = ({ experiment }: TableAudienceProps) => {
   const { firefoxVersions, channels, targetingConfigs } = useConfig();
   const isDesktop =
     experiment.application === NimbusExperimentApplicationEnum.DESKTOP;
+  const isMobile =
+    experiment.application != null &&
+    MOBILE_APPLICATIONS.includes(experiment.application);
 
   const [expand, setExpand] = useState(false);
 
@@ -137,11 +145,54 @@ const TableAudience = ({ experiment }: TableAudienceProps) => {
                 {experiment.isSticky ? "True" : "False"}
               </td>
 
-              <th>First Run Experiment</th>
-              <td data-testid="experiment-is-first-run">
-                {experiment.isFirstRun ? "True" : "False"}
+              {isMobile ? (
+                <>
+                  <th>First Run Experiment</th>
+                  <td data-testid="experiment-is-first-run">
+                    {experiment.isFirstRun ? "True" : "False"}
+                  </td>
+                </>
+              ) : (
+                <td colSpan={2}></td>
+              )}
+            </tr>
+            {isMobile && (
+              <tr>
+                <th>First Run Release Date</th>
+                <td colSpan={3} data-testid="experiment-release-date">
+                  {experiment.proposedReleaseDate ? (
+                    experiment.proposedReleaseDate
+                  ) : (
+                    <NotSet color="primary" />
+                  )}
+                </td>
+              </tr>
+            )}
+            <tr>
+              <th>Required Experiments</th>
+              <td>
+                <ExperimentList
+                  experimentsBranches={experiment.requiredExperimentsBranches.map(
+                    (eb) => ({
+                      experiment: eb.requiredExperiment,
+                      branchSlug: eb.branchSlug,
+                    }),
+                  )}
+                />
+              </td>
+              <th>Excluded Experiments</th>
+              <td>
+                <ExperimentList
+                  experimentsBranches={experiment.excludedExperimentsBranches.map(
+                    (eb) => ({
+                      experiment: eb.excludedExperiment,
+                      branchSlug: eb.branchSlug,
+                    }),
+                  )}
+                />
               </td>
             </tr>
+
             {experiment.jexlTargetingExpression &&
             experiment.jexlTargetingExpression !== "" ? (
               <tr>
@@ -210,5 +261,36 @@ const TableAudience = ({ experiment }: TableAudienceProps) => {
     </Card>
   );
 };
+
+interface ExperimentListProps {
+  experimentsBranches: {
+    experiment:
+      | getExperiment_experimentBySlug_excludedExperimentsBranches_excludedExperiment
+      | getExperiment_experimentBySlug_requiredExperimentsBranches_requiredExperiment;
+    branchSlug: string | null;
+  }[];
+}
+function ExperimentList({ experimentsBranches }: ExperimentListProps) {
+  if (experimentsBranches.length === 0) {
+    return <span>None</span>;
+  }
+
+  return (
+    <>
+      {experimentsBranches.map((experimentBranch) => {
+        const branchLabel = experimentBranch.branchSlug
+          ? `${experimentBranch.branchSlug} branch`
+          : "All branches";
+        return (
+          <p key={experimentBranch.experiment.slug}>
+            <a href={`/nimbus/${experimentBranch.experiment.slug}/summary`}>
+              {experimentBranch.experiment.name} ({branchLabel})
+            </a>
+          </p>
+        );
+      })}
+    </>
+  );
+}
 
 export default TableAudience;
